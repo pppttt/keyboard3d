@@ -1547,10 +1547,10 @@ async function drawHeatTransferTile(
     const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
 
     const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
-    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap, false, true);
+    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap, false, false);
     drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX + overlap, tile.topH, true, false);
     drawFlippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH, true, false);
-    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap, false, true);
+    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap, false, false);
     drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
     repairHeatTransferSeams(ctx, projectionCanvas, tile, x, y, frame.config, frame.keyIndex, { sourceX, sourceY, sourceW, sourceH });
   }
