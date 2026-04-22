@@ -66,6 +66,20 @@ type ProjectionLayer = {
   opacity: number;
 };
 
+type ResizeHandle = "nw" | "ne" | "se" | "sw";
+
+type LayerInteraction =
+  | { type: "move"; layerId: string; offsetX: number; offsetY: number }
+  | {
+      type: "resize";
+      layerId: string;
+      handle: ResizeHandle;
+      fixedX: number;
+      fixedY: number;
+      startWidth: number;
+      startHeight: number;
+    };
+
 const fallbackPresets: KeyboardPreset[] = [
   {
     id: "atelier-60",
@@ -877,31 +891,12 @@ function ProjectionDesigner({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const projectionRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
-  const dragRef = useRef<{ layerId: string; offsetX: number; offsetY: number } | null>(null);
+  const dragRef = useRef<LayerInteraction | null>(null);
   const layersRef = useRef(layers);
-  const pendingLayersRef = useRef<ProjectionLayer[] | null>(null);
-  const layerFrameRef = useRef(0);
 
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
-
-  useEffect(() => {
-    return () => {
-      if (layerFrameRef.current) cancelAnimationFrame(layerFrameRef.current);
-    };
-  }, []);
-
-  function scheduleLayersChange(nextLayers: ProjectionLayer[]) {
-    pendingLayersRef.current = nextLayers;
-    if (layerFrameRef.current) return;
-    layerFrameRef.current = requestAnimationFrame(() => {
-      layerFrameRef.current = 0;
-      const pending = pendingLayersRef.current;
-      pendingLayersRef.current = null;
-      if (pending) onLayersChange(pending);
-    });
-  }
 
   const frame = useMemo(() => {
     if (!keys.length) return { minX: 0, minY: 0, maxX: 15, maxY: 5 };
@@ -995,10 +990,13 @@ function ProjectionDesigner({
       ctx.fillText(key.label || String(index + 1), x + w / 2, y + h / 2);
     });
 
+    const selectedLayer = layersToRender.find((layer) => layer.id === selectedLayerId);
+    if (selectedLayer) drawLayerHandles(ctx, selectedLayer, dpr);
+
     if (publish) {
       onProjectionCanvas(projection, layersToRender.length > 0);
     }
-  }, [keys, selectedKeys, frame, onProjectionCanvas]);
+  }, [keys, selectedKeys, selectedLayerId, frame, onProjectionCanvas]);
 
   useEffect(() => {
     renderProjectionCanvas(layers, { publish: !dragRef.current });
@@ -1034,15 +1032,46 @@ function ProjectionDesigner({
     return point.x >= layer.x && point.x <= layer.x + layer.width && point.y >= layer.y && point.y <= layer.y + layer.height;
   }
 
+  function commitLayers(nextLayers: ProjectionLayer[]) {
+    layersRef.current = nextLayers;
+    onLayersChange(nextLayers);
+    renderProjectionCanvas(nextLayers, { publish: true });
+  }
+
   function onPointerDown(event: PointerEvent<HTMLCanvasElement>) {
     const point = canvasPoint(event);
+    const selectedLayer = layersRef.current.find((item) => item.id === selectedLayerId);
+    if (selectedLayer) {
+      const handle = hitLayerHandle(selectedLayer, point);
+      if (handle === "delete") {
+        const nextLayers = layersRef.current.filter((item) => item.id !== selectedLayer.id);
+        setSelectedLayerId(null);
+        commitLayers(nextLayers);
+        return;
+      }
+      if (handle) {
+        const fixed = resizeFixedPoint(selectedLayer, handle);
+        dragRef.current = {
+          type: "resize",
+          layerId: selectedLayer.id,
+          handle,
+          fixedX: fixed.x,
+          fixedY: fixed.y,
+          startWidth: selectedLayer.width,
+          startHeight: selectedLayer.height,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
+    }
+
     const layer = [...layers]
       .reverse()
       .find((item) => hitLayer(item, point));
     if (layer) {
       setSelectedLayerId(layer.id);
       const local = localLayerPoint(layer, point);
-      dragRef.current = { layerId: layer.id, offsetX: local.x, offsetY: local.y };
+      dragRef.current = { type: "move", layerId: layer.id, offsetX: local.x, offsetY: local.y };
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
@@ -1058,7 +1087,8 @@ function ProjectionDesigner({
     const point = canvasPoint(event);
     const nextLayers = layersRef.current.map((layer) => {
       if (layer.id !== drag.layerId) return layer;
-      return { ...layer, x: point.x - drag.offsetX, y: point.y - drag.offsetY };
+      if (drag.type === "move") return { ...layer, x: point.x - drag.offsetX, y: point.y - drag.offsetY };
+      return resizeLayer(layer, drag, point);
     });
     layersRef.current = nextLayers;
     renderProjectionCanvas(nextLayers, { publish: false });
@@ -1083,6 +1113,107 @@ function ProjectionDesigner({
       onPointerUp={onPointerUp}
     />
   );
+}
+
+const HANDLE_SIZE = 14;
+const DELETE_HANDLE_SIZE = 18;
+const MIN_LAYER_SIZE = 24;
+
+function layerHandles(layer: ProjectionLayer) {
+  const half = HANDLE_SIZE / 2;
+  return {
+    nw: { x: layer.x - half, y: layer.y - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
+    ne: { x: layer.x + layer.width - half, y: layer.y - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
+    se: { x: layer.x + layer.width - half, y: layer.y + layer.height - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
+    sw: { x: layer.x - half, y: layer.y + layer.height - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
+    delete: { x: layer.x + layer.width + 6, y: layer.y - DELETE_HANDLE_SIZE - 6, width: DELETE_HANDLE_SIZE, height: DELETE_HANDLE_SIZE },
+  };
+}
+
+function hitRect(rect: { x: number; y: number; width: number; height: number }, point: { x: number; y: number }) {
+  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+}
+
+function hitLayerHandle(layer: ProjectionLayer, point: { x: number; y: number }): ResizeHandle | "delete" | null {
+  const handles = layerHandles(layer);
+  if (hitRect(handles.delete, point)) return "delete";
+  if (hitRect(handles.nw, point)) return "nw";
+  if (hitRect(handles.ne, point)) return "ne";
+  if (hitRect(handles.se, point)) return "se";
+  if (hitRect(handles.sw, point)) return "sw";
+  return null;
+}
+
+function resizeFixedPoint(layer: ProjectionLayer, handle: ResizeHandle) {
+  if (handle === "nw") return { x: layer.x + layer.width, y: layer.y + layer.height };
+  if (handle === "ne") return { x: layer.x, y: layer.y + layer.height };
+  if (handle === "se") return { x: layer.x, y: layer.y };
+  return { x: layer.x + layer.width, y: layer.y };
+}
+
+function resizeLayer(layer: ProjectionLayer, interaction: Extract<LayerInteraction, { type: "resize" }>, point: { x: number; y: number }): ProjectionLayer {
+  const rawWidth = interaction.handle === "nw" || interaction.handle === "sw" ? interaction.fixedX - point.x : point.x - interaction.fixedX;
+  const rawHeight = interaction.handle === "nw" || interaction.handle === "ne" ? interaction.fixedY - point.y : point.y - interaction.fixedY;
+  const scale = Math.max(MIN_LAYER_SIZE / interaction.startWidth, MIN_LAYER_SIZE / interaction.startHeight, rawWidth / interaction.startWidth, rawHeight / interaction.startHeight);
+  const width = interaction.startWidth * scale;
+  const height = interaction.startHeight * scale;
+  return {
+    ...layer,
+    x: interaction.handle === "nw" || interaction.handle === "sw" ? interaction.fixedX - width : interaction.fixedX,
+    y: interaction.handle === "nw" || interaction.handle === "ne" ? interaction.fixedY - height : interaction.fixedY,
+    width,
+    height,
+  };
+}
+
+function drawLayerHandles(ctx: CanvasRenderingContext2D, layer: ProjectionLayer, dpr: number) {
+  const x = layer.x * dpr;
+  const y = layer.y * dpr;
+  const width = layer.width * dpr;
+  const height = layer.height * dpr;
+  const handleSize = HANDLE_SIZE * dpr;
+  const deleteSize = DELETE_HANDLE_SIZE * dpr;
+  const half = handleSize / 2;
+
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#64c6b0";
+  ctx.lineWidth = 2 * dpr;
+  ctx.setLineDash([6 * dpr, 4 * dpr]);
+  ctx.strokeRect(x, y, width, height);
+  ctx.setLineDash([]);
+
+  [
+    [x - half, y - half],
+    [x + width - half, y - half],
+    [x + width - half, y + height - half],
+    [x - half, y + height - half],
+  ].forEach(([handleX, handleY]) => {
+    ctx.fillStyle = "#101416";
+    ctx.strokeStyle = "#64c6b0";
+    ctx.lineWidth = 2 * dpr;
+    ctx.fillRect(handleX, handleY, handleSize, handleSize);
+    ctx.strokeRect(handleX, handleY, handleSize, handleSize);
+  });
+
+  const deleteX = x + width + (6 + DELETE_HANDLE_SIZE / 2) * dpr;
+  const deleteY = y - (6 + DELETE_HANDLE_SIZE / 2) * dpr;
+  ctx.beginPath();
+  ctx.arc(deleteX, deleteY, deleteSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = "#ef8354";
+  ctx.fill();
+  ctx.strokeStyle = "#101416";
+  ctx.lineWidth = 2 * dpr;
+  ctx.stroke();
+  ctx.strokeStyle = "#101416";
+  ctx.lineWidth = 2.2 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(deleteX - deleteSize * 0.22, deleteY - deleteSize * 0.22);
+  ctx.lineTo(deleteX + deleteSize * 0.22, deleteY + deleteSize * 0.22);
+  ctx.moveTo(deleteX + deleteSize * 0.22, deleteY - deleteSize * 0.22);
+  ctx.lineTo(deleteX - deleteSize * 0.22, deleteY + deleteSize * 0.22);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
