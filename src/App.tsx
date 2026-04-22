@@ -59,6 +59,8 @@ type ProjectionLayer = {
   id: string;
   name: string;
   image: HTMLImageElement;
+  sourceDataUrl?: string;
+  sourceMime?: string;
   x: number;
   y: number;
   width: number;
@@ -507,6 +509,8 @@ export default function App() {
               id: `${file.name}-${Date.now()}-${index}`,
               name: file.name,
               image,
+              sourceDataUrl: String(reader.result),
+              sourceMime: file.type || "image/png",
               x: 80 + index * 32,
               y: 60 + index * 24,
               width: Math.min(320, image.width),
@@ -521,6 +525,24 @@ export default function App() {
       reader.readAsDataURL(file);
     });
     event.target.value = "";
+  }
+
+  async function onExportProject() {
+    const blob = await exportProjectZip({
+      mode,
+      presetId,
+      layoutPath,
+      config,
+      layers: projectionLayers,
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `keyboard3d-export-${timestampForFile()}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   function onIconPngChange(event: ChangeEvent<HTMLInputElement>) {
@@ -712,10 +734,15 @@ export default function App() {
                 <h2>Projection Canvas</h2>
                 <p>Place PNG artwork over the keyboard map. The same canvas is projected onto keycaps in 3D.</p>
               </div>
-              <label className="file-button">
-                Add PNG
-                <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={onPngChange} />
-              </label>
+              <div className="section-actions">
+                <label className="file-button">
+                  Add PNG
+                  <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={onPngChange} />
+                </label>
+                <button className="secondary-button" type="button" onClick={onExportProject}>
+                  Export
+                </button>
+              </div>
             </div>
             <ProjectionDesigner
               keys={config.layoutKeys}
@@ -1312,6 +1339,196 @@ function drawLayerHandles(ctx: CanvasRenderingContext2D, layer: ProjectionLayer,
   ctx.lineTo(deleteX - deleteSize * 0.22, deleteY + deleteSize * 0.22);
   ctx.stroke();
   ctx.restore();
+}
+
+type ExportProjectInput = {
+  mode: "preset" | "custom";
+  presetId: string;
+  layoutPath: string;
+  config: SceneConfig;
+  layers: ProjectionLayer[];
+};
+
+async function exportProjectZip(input: ExportProjectInput) {
+  const imageFiles = await Promise.all(
+    input.layers.map(async (layer, index) => {
+      const image = await layerImageBytes(layer);
+      const extension = extensionFromMime(image.mime, layer.name);
+      const path = `assets/images/${String(index + 1).padStart(2, "0")}-${safeFileBase(layer.name)}.${extension}`;
+      return { layer, image, path };
+    }),
+  );
+
+  const project = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    app: "keyboard3d",
+    mode: input.mode,
+    presetId: input.presetId,
+    layoutPath: input.layoutPath,
+    config: exportableConfig(input.config),
+    projectionLayers: imageFiles.map(({ layer, image, path }) => ({
+      id: layer.id,
+      name: layer.name,
+      file: path,
+      mime: image.mime,
+      x: layer.x,
+      y: layer.y,
+      width: layer.width,
+      height: layer.height,
+      rotation: layer.rotation,
+      rotationDegrees: (layer.rotation * 180) / Math.PI,
+      opacity: layer.opacity,
+      naturalWidth: layer.image.naturalWidth,
+      naturalHeight: layer.image.naturalHeight,
+    })),
+  };
+
+  const encoder = new TextEncoder();
+  return createZip([
+    { path: "project.json", data: encoder.encode(JSON.stringify(project, null, 2)) },
+    ...imageFiles.map(({ image, path }) => ({ path, data: image.data })),
+  ]);
+}
+
+function exportableConfig(config: SceneConfig) {
+  const { skinImage, projectionCanvas, projectionVersion, ...rest } = config;
+  void skinImage;
+  void projectionCanvas;
+  void projectionVersion;
+  return rest;
+}
+
+async function layerImageBytes(layer: ProjectionLayer): Promise<{ data: Uint8Array; mime: string }> {
+  if (layer.sourceDataUrl) {
+    const parsed = dataUrlToBytes(layer.sourceDataUrl);
+    if (parsed) return parsed;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, layer.image.naturalWidth || Math.round(layer.width));
+  canvas.height = Math.max(1, layer.image.naturalHeight || Math.round(layer.height));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { data: new Uint8Array(), mime: "image/png" };
+  ctx.drawImage(layer.image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob ?? new Blob()), "image/png"));
+  return { data: new Uint8Array(await blob.arrayBuffer()), mime: "image/png" };
+}
+
+function dataUrlToBytes(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+  if (!match) return null;
+  const mime = match[1] || "application/octet-stream";
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] ?? "";
+  const binary = isBase64 ? atob(payload) : decodeURIComponent(payload);
+  const data = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) data[index] = binary.charCodeAt(index);
+  return { data, mime };
+}
+
+function extensionFromMime(mime: string, fallbackName: string) {
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/png") return "png";
+  const extension = fallbackName.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return extension || "png";
+}
+
+function safeFileBase(name: string) {
+  const base = name.replace(/\.[^/.]+$/, "");
+  return base.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "layer";
+}
+
+function timestampForFile() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+type ZipFile = {
+  path: string;
+  data: Uint8Array;
+};
+
+function createZip(files: ZipFile[]) {
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+
+  files.forEach((file) => {
+    const name = new TextEncoder().encode(file.path.replace(/\\/g, "/"));
+    const crc = crc32(file.data);
+    const localHeader = new Uint8Array(30 + name.length);
+    const local = new DataView(localHeader.buffer);
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0x0800, true);
+    local.setUint16(8, 0, true);
+    local.setUint16(10, dosTime(), true);
+    local.setUint16(12, dosDate(), true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, file.data.length, true);
+    local.setUint32(22, file.data.length, true);
+    local.setUint16(26, name.length, true);
+    localHeader.set(name, 30);
+    localParts.push(localHeader, file.data);
+
+    const centralHeader = new Uint8Array(46 + name.length);
+    const central = new DataView(centralHeader.buffer);
+    central.setUint32(0, 0x02014b50, true);
+    central.setUint16(4, 20, true);
+    central.setUint16(6, 20, true);
+    central.setUint16(8, 0x0800, true);
+    central.setUint16(10, 0, true);
+    central.setUint16(12, dosTime(), true);
+    central.setUint16(14, dosDate(), true);
+    central.setUint32(16, crc, true);
+    central.setUint32(20, file.data.length, true);
+    central.setUint32(24, file.data.length, true);
+    central.setUint16(28, name.length, true);
+    central.setUint32(42, offset, true);
+    centralHeader.set(name, 46);
+    centralParts.push(centralHeader);
+    offset += localHeader.length + file.data.length;
+  });
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, files.length, true);
+  endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, offset, true);
+
+  const parts = [...localParts, ...centralParts, end];
+  const zipBytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let cursor = 0;
+  parts.forEach((part) => {
+    zipBytes.set(part, cursor);
+    cursor += part.length;
+  });
+  const zipBuffer = zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength) as ArrayBuffer;
+  return new Blob([zipBuffer], { type: "application/zip" });
+}
+
+function dosTime(date = new Date()) {
+  return (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+}
+
+function dosDate(date = new Date()) {
+  return ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+}
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  return value >>> 0;
+});
+
+function crc32(data: Uint8Array) {
+  let crc = 0xffffffff;
+  for (let index = 0; index < data.length; index += 1) crc = CRC_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
