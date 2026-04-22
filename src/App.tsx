@@ -1547,10 +1547,10 @@ async function drawHeatTransferTile(
     const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
 
     const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX + overlap, tile.topH);
-    drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap);
+    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap, false, true);
+    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX + overlap, tile.topH, true, false);
+    drawFlippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH, true, false);
+    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap, false, true);
     drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
     repairHeatTransferSeams(ctx, projectionCanvas, tile, x, y, frame.config, frame.keyIndex, { sourceX, sourceY, sourceW, sourceH });
   }
@@ -1722,6 +1722,29 @@ function shadeColor(color: string, amount: number) {
   if (!/^[0-9a-f]{6}$/i.test(hex)) return color;
   const channel = (start: number) => Math.max(0, Math.min(255, parseInt(hex.slice(start, start + 2), 16) + amount));
   return `#${[channel(0), channel(2), channel(4)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function drawFlippedImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLCanvasElement,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  flipX: boolean,
+  flipY: boolean,
+) {
+  const bleedX = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dw / 3));
+  const bleedY = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dh / 3));
+  ctx.save();
+  ctx.translate(dx + dw / 2, dy + dh / 2);
+  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+  ctx.drawImage(image, sx, sy, sw, sh, -dw / 2 - bleedX, -dh / 2 - bleedY, dw + bleedX * 2, dh + bleedY * 2);
+  ctx.restore();
 }
 
 function drawClippedImage(
