@@ -1420,6 +1420,7 @@ const HEAT_TRANSFER_DPI = 300;
 const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
 const HEAT_TRANSFER_KEY_SPACING_MM = 5;
 const HEAT_TRANSFER_SIDE_RATIO = 0.34;
+const HEAT_TRANSFER_BLEED_PX = 2;
 
 async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
   const keys = config.layoutKeys;
@@ -1700,19 +1701,32 @@ function drawClippedImage(
 ) {
   const sourceWidth = image.width;
   const sourceHeight = image.height;
-  const clippedX = Math.max(0, sx);
-  const clippedY = Math.max(0, sy);
-  const clippedRight = Math.min(sourceWidth, sx + sw);
-  const clippedBottom = Math.min(sourceHeight, sy + sh);
+  const bleedX = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dw / 3));
+  const bleedY = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dh / 3));
+  const sourceBleedX = (sw / dw) * bleedX;
+  const sourceBleedY = (sh / dh) * bleedY;
+  const expandedSx = sx - sourceBleedX;
+  const expandedSy = sy - sourceBleedY;
+  const expandedSw = sw + sourceBleedX * 2;
+  const expandedSh = sh + sourceBleedY * 2;
+  const expandedDx = dx - bleedX;
+  const expandedDy = dy - bleedY;
+  const expandedDw = dw + bleedX * 2;
+  const expandedDh = dh + bleedY * 2;
+
+  const clippedX = Math.max(0, expandedSx);
+  const clippedY = Math.max(0, expandedSy);
+  const clippedRight = Math.min(sourceWidth, expandedSx + expandedSw);
+  const clippedBottom = Math.min(sourceHeight, expandedSy + expandedSh);
   const clippedW = clippedRight - clippedX;
   const clippedH = clippedBottom - clippedY;
   if (clippedW <= 0 || clippedH <= 0) return;
 
-  const offsetX = ((clippedX - sx) / sw) * dw;
-  const offsetY = ((clippedY - sy) / sh) * dh;
-  const destW = (clippedW / sw) * dw;
-  const destH = (clippedH / sh) * dh;
-  ctx.drawImage(image, clippedX, clippedY, clippedW, clippedH, dx + offsetX, dy + offsetY, destW, destH);
+  const offsetX = ((clippedX - expandedSx) / expandedSw) * expandedDw;
+  const offsetY = ((clippedY - expandedSy) / expandedSh) * expandedDh;
+  const destW = (clippedW / expandedSw) * expandedDw;
+  const destH = (clippedH / expandedSh) * expandedDh;
+  ctx.drawImage(image, clippedX, clippedY, clippedW, clippedH, expandedDx + offsetX, expandedDy + offsetY, destW, destH);
 }
 
 async function canvasToPngBytes(canvas: HTMLCanvasElement) {
