@@ -66,8 +66,6 @@ type ProjectionLayer = {
   opacity: number;
 };
 
-const PROJECTION_PUBLISH_INTERVAL_MS = 96;
-
 const fallbackPresets: KeyboardPreset[] = [
   {
     id: "atelier-60",
@@ -883,9 +881,6 @@ function ProjectionDesigner({
   const layersRef = useRef(layers);
   const pendingLayersRef = useRef<ProjectionLayer[] | null>(null);
   const layerFrameRef = useRef(0);
-  const pendingProjectionLayersRef = useRef<ProjectionLayer[] | null>(null);
-  const projectionPublishTimerRef = useRef<number | null>(null);
-  const lastProjectionPublishRef = useRef(0);
 
   useEffect(() => {
     layersRef.current = layers;
@@ -894,7 +889,6 @@ function ProjectionDesigner({
   useEffect(() => {
     return () => {
       if (layerFrameRef.current) cancelAnimationFrame(layerFrameRef.current);
-      if (projectionPublishTimerRef.current !== null) window.clearTimeout(projectionPublishTimerRef.current);
     };
   }, []);
 
@@ -949,10 +943,12 @@ function ProjectionDesigner({
     const projectionScale = 128;
     const projection = projectionRef.current ?? document.createElement("canvas");
     projectionRef.current = projection;
-    projection.width = Math.max(1, Math.ceil(layoutW * projectionScale));
-    projection.height = Math.max(1, Math.ceil(layoutH * projectionScale));
-    const projectionCtx = projection.getContext("2d");
-    projectionCtx?.clearRect(0, 0, projection.width, projection.height);
+    const projectionCtx = publish ? projection.getContext("2d") : null;
+    if (publish) {
+      projection.width = Math.max(1, Math.ceil(layoutW * projectionScale));
+      projection.height = Math.max(1, Math.ceil(layoutH * projectionScale));
+      projectionCtx?.clearRect(0, 0, projection.width, projection.height);
+    }
 
     const drawLayer = (targetCtx: CanvasRenderingContext2D, layer: ProjectionLayer, x: number, y: number, width: number, height: number) => {
       targetCtx.globalAlpha = layer.opacity;
@@ -1000,30 +996,9 @@ function ProjectionDesigner({
     });
 
     if (publish) {
-      pendingProjectionLayersRef.current = null;
-      lastProjectionPublishRef.current = performance.now();
       onProjectionCanvas(projection, layersToRender.length > 0);
     }
   }, [keys, selectedKeys, frame, onProjectionCanvas]);
-
-  function cancelScheduledProjectionPublish() {
-    if (projectionPublishTimerRef.current === null) return;
-    window.clearTimeout(projectionPublishTimerRef.current);
-    projectionPublishTimerRef.current = null;
-  }
-
-  function scheduleProjectionPublish(nextLayers: ProjectionLayer[]) {
-    pendingProjectionLayersRef.current = nextLayers;
-    if (projectionPublishTimerRef.current !== null) return;
-
-    const elapsed = performance.now() - lastProjectionPublishRef.current;
-    const delay = Math.max(0, PROJECTION_PUBLISH_INTERVAL_MS - elapsed);
-    projectionPublishTimerRef.current = window.setTimeout(() => {
-      projectionPublishTimerRef.current = null;
-      const pending = pendingProjectionLayersRef.current;
-      if (pending) renderProjectionCanvas(pending, { publish: true });
-    }, delay);
-  }
 
   useEffect(() => {
     renderProjectionCanvas(layers, { publish: !dragRef.current });
@@ -1087,13 +1062,12 @@ function ProjectionDesigner({
     });
     layersRef.current = nextLayers;
     renderProjectionCanvas(nextLayers, { publish: false });
-    scheduleProjectionPublish(nextLayers);
-    scheduleLayersChange(nextLayers);
   }
 
   function onPointerUp(event: PointerEvent<HTMLCanvasElement>) {
-    cancelScheduledProjectionPublish();
-    renderProjectionCanvas(layersRef.current, { publish: true });
+    const nextLayers = layersRef.current;
+    onLayersChange(nextLayers);
+    renderProjectionCanvas(nextLayers, { publish: true });
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
