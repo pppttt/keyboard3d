@@ -1421,6 +1421,7 @@ const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
 const HEAT_TRANSFER_KEY_SPACING_MM = 5;
 const HEAT_TRANSFER_SIDE_RATIO = 0.34;
 const HEAT_TRANSFER_BLEED_PX = 2;
+const HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX = 6;
 
 async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
   const keys = config.layoutKeys;
@@ -1544,11 +1545,12 @@ async function drawHeatTransferTile(
     const sideDepthX = Math.max(6, sourceW * HEAT_TRANSFER_SIDE_RATIO);
     const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
 
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX, y + tile.sideY, tile.topW, tile.topH);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX, tile.topH);
-    drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW, y + tile.sideY, tile.sideX, tile.topH);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH, tile.topW, tile.sideY);
+    const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX + overlap, tile.topH);
+    drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
   }
   await drawHeatTransferLegends(ctx, tile, x, y, frame.config, frame.keyIndex);
 }
@@ -1563,13 +1565,14 @@ function drawHeatTransferKeyBase(
 ) {
   const override = config.keyOverrides[keyIndex] ?? {};
   const color = override.color ?? tile.key.color ?? config.keycapColor;
+  const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
   ctx.fillStyle = shadeColor(color, -12);
-  ctx.fillRect(x + tile.sideX, y, tile.topW, tile.sideY);
-  ctx.fillRect(x, y + tile.sideY, tile.sideX, tile.topH);
-  ctx.fillRect(x + tile.sideX + tile.topW, y + tile.sideY, tile.sideX, tile.topH);
-  ctx.fillRect(x + tile.sideX, y + tile.sideY + tile.topH, tile.topW, tile.sideY);
+  ctx.fillRect(x + tile.sideX, y, tile.topW, tile.sideY + overlap);
+  ctx.fillRect(x, y + tile.sideY, tile.sideX + overlap, tile.topH);
+  ctx.fillRect(x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH);
+  ctx.fillRect(x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap);
   ctx.fillStyle = color;
-  ctx.fillRect(x + tile.sideX, y + tile.sideY, tile.topW, tile.topH);
+  ctx.fillRect(x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
 }
 
 async function drawHeatTransferLegends(
