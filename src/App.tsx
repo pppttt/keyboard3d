@@ -1548,8 +1548,8 @@ async function drawHeatTransferTile(
 
     const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
     drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap, false, false);
-    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX + overlap, tile.topH, true, false);
-    drawFlippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH, true, false);
+    drawSideFromEdge(ctx, projectionCanvas, sourceX, sourceY, sourceH, x, y + tile.sideY, tile.sideX + overlap, tile.topH, "left");
+    drawSideFromEdge(ctx, projectionCanvas, sourceX + sourceW - 1, sourceY, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH, "right");
     drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap, false, false);
     drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
     repairHeatTransferSeams(ctx, projectionCanvas, tile, x, y, frame.config, frame.keyIndex, { sourceX, sourceY, sourceW, sourceH });
@@ -1745,6 +1745,34 @@ function drawFlippedImage(
   ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
   ctx.drawImage(image, sx, sy, sw, sh, -dw / 2 - bleedX, -dh / 2 - bleedY, dw + bleedX * 2, dh + bleedY * 2);
   ctx.restore();
+}
+
+function drawSideFromEdge(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLCanvasElement,
+  sourceEdgeX: number,
+  sourceY: number,
+  sourceH: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  side: "left" | "right",
+) {
+  const bleedX = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dw / 3));
+  const bleedY = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dh / 3));
+  const edgeX = Math.max(0, Math.min(image.width - 1, sourceEdgeX));
+  const gradient = ctx.createLinearGradient(dx, 0, dx + dw, 0);
+  if (side === "left") {
+    gradient.addColorStop(0, "rgba(0, 0, 0, 0.12)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+  } else {
+    gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0.12)");
+  }
+  ctx.drawImage(image, edgeX, sourceY, 1, sourceH, dx - bleedX, dy - bleedY, dw + bleedX * 2, dh + bleedY * 2);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(dx - bleedX, dy - bleedY, dw + bleedX * 2, dh + bleedY * 2);
 }
 
 function drawClippedImage(
