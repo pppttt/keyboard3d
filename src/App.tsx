@@ -1420,6 +1420,7 @@ const HEAT_TRANSFER_DPI = 300;
 const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
 const HEAT_TRANSFER_KEY_SPACING_MM = 5;
 const HEAT_TRANSFER_SIDE_RATIO = 0.34;
+const HEAT_TRANSFER_SOURCE_BAND_RATIO = 0.32;
 const HEAT_TRANSFER_BLEED_PX = 2;
 const HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX = 6;
 const HEAT_TRANSFER_SEAM_REPAIR_PX = 10;
@@ -1487,6 +1488,7 @@ async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HT
         config,
         keyIndex: keys.indexOf(tile.key),
       });
+      const unwrap = heatTransferUnwrapMetrics(tile);
       layout.push({
         row: rowIndex,
         column: columnIndex,
@@ -1505,6 +1507,12 @@ async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HT
           top: { x: tile.sideX, y: tile.sideY, width: tile.topW, height: tile.topH },
           right: { x: tile.sideX + tile.topW, y: tile.sideY, width: tile.sideX, height: tile.topH },
           front: { x: tile.sideX, y: tile.sideY + tile.topH, width: tile.topW, height: tile.sideY },
+        },
+        unwrap3x3: {
+          cornerWidthPx: unwrap.cornerW,
+          cornerHeightPx: unwrap.cornerH,
+          centerPx: { x: tile.sideX, y: tile.sideY, width: tile.topW, height: tile.topH },
+          sideDepthPx: { x: tile.sideX, y: tile.sideY },
         },
       });
       cursorX += tileW + spacingPx;
@@ -1543,16 +1551,58 @@ async function drawHeatTransferTile(
     const sourceY = ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height;
     const sourceW = (tile.key.w / frame.frameW) * projectionCanvas.width;
     const sourceH = (tile.key.h / frame.frameH) * projectionCanvas.height;
-    const sideDepthX = Math.max(6, sourceW * HEAT_TRANSFER_SIDE_RATIO);
-    const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
-
-    const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
-    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY + overlap, false, false);
-    drawFlippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap, false, false);
-    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
-    repairHeatTransferSeams(ctx, projectionCanvas, tile, x, y, frame.config, frame.keyIndex, { sourceX, sourceY, sourceW, sourceH });
+    drawHeatTransferUnwrap3x3(ctx, projectionCanvas, tile, x, y, { sourceX, sourceY, sourceW, sourceH });
   }
   await drawHeatTransferLegends(ctx, tile, x, y, frame.config, frame.keyIndex);
+}
+
+function drawHeatTransferUnwrap3x3(
+  ctx: CanvasRenderingContext2D,
+  projectionCanvas: HTMLCanvasElement,
+  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  x: number,
+  y: number,
+  source: { sourceX: number; sourceY: number; sourceW: number; sourceH: number },
+) {
+  const sourceBandX = Math.min(source.sourceW * HEAT_TRANSFER_SOURCE_BAND_RATIO, Math.max(6, source.sourceW * HEAT_TRANSFER_SIDE_RATIO));
+  const sourceBandY = Math.min(source.sourceH * HEAT_TRANSFER_SOURCE_BAND_RATIO, Math.max(6, source.sourceH * HEAT_TRANSFER_SIDE_RATIO));
+  const sourceCenterW = Math.max(1, source.sourceW - sourceBandX * 2);
+  const sourceCenterH = Math.max(1, source.sourceH - sourceBandY * 2);
+  const { cornerW, cornerH } = heatTransferUnwrapMetrics(tile);
+  const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
+
+  const sx0 = source.sourceX;
+  const sx1 = source.sourceX + sourceBandX;
+  const sx2 = source.sourceX + source.sourceW - sourceBandX;
+  const sy0 = source.sourceY;
+  const sy1 = source.sourceY + sourceBandY;
+  const sy2 = source.sourceY + source.sourceH - sourceBandY;
+  const topX = x + tile.sideX;
+  const topY = y + tile.sideY;
+
+  drawClippedImage(ctx, projectionCanvas, sx1, sy1, sourceCenterW, sourceCenterH, topX - overlap, topY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
+
+  drawClippedImage(ctx, projectionCanvas, sx1, sy0, sourceCenterW, sourceBandY, topX + cornerW, y, Math.max(1, tile.topW - cornerW * 2), tile.sideY + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx1, sy2, sourceCenterW, sourceBandY, topX + cornerW, topY + tile.topH - overlap, Math.max(1, tile.topW - cornerW * 2), tile.sideY + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx0, sy1, sourceBandX, sourceCenterH, x, topY + cornerH, tile.sideX + overlap, Math.max(1, tile.topH - cornerH * 2));
+  drawClippedImage(ctx, projectionCanvas, sx2, sy1, sourceBandX, sourceCenterH, topX + tile.topW - overlap, topY + cornerH, tile.sideX + overlap, Math.max(1, tile.topH - cornerH * 2));
+
+  drawClippedImage(ctx, projectionCanvas, sx0, sy0, sourceBandX, sourceBandY, x, topY, tile.sideX + overlap, cornerH + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx0, sy2, sourceBandX, sourceBandY, x, topY + tile.topH - cornerH, tile.sideX + overlap, cornerH + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx2, sy0, sourceBandX, sourceBandY, topX + tile.topW - overlap, topY, tile.sideX + overlap, cornerH + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx2, sy2, sourceBandX, sourceBandY, topX + tile.topW - overlap, topY + tile.topH - cornerH, tile.sideX + overlap, cornerH + overlap);
+
+  drawClippedImage(ctx, projectionCanvas, sx0, sy0, sourceBandX, sourceBandY, topX, y, cornerW + overlap, tile.sideY + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx2, sy0, sourceBandX, sourceBandY, topX + tile.topW - cornerW, y, cornerW + overlap, tile.sideY + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx0, sy2, sourceBandX, sourceBandY, topX, topY + tile.topH - overlap, cornerW + overlap, tile.sideY + overlap);
+  drawClippedImage(ctx, projectionCanvas, sx2, sy2, sourceBandX, sourceBandY, topX + tile.topW - cornerW, topY + tile.topH - overlap, cornerW + overlap, tile.sideY + overlap);
+}
+
+function heatTransferUnwrapMetrics(tile: { topW: number; topH: number; sideX: number; sideY: number }) {
+  return {
+    cornerW: Math.min(tile.sideX, Math.max(1, tile.topW * HEAT_TRANSFER_SOURCE_BAND_RATIO)),
+    cornerH: Math.min(tile.sideY, Math.max(1, tile.topH * HEAT_TRANSFER_SOURCE_BAND_RATIO)),
+  };
 }
 
 function drawHeatTransferKeyBase(
