@@ -63,13 +63,15 @@ type ProjectionLayer = {
   y: number;
   width: number;
   height: number;
+  rotation: number;
   opacity: number;
 };
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
 
 type LayerInteraction =
-  | { type: "move"; layerId: string; offsetX: number; offsetY: number }
+  | { type: "move"; layerId: string; startX: number; startY: number; pointerX: number; pointerY: number }
+  | { type: "rotate"; layerId: string; centerX: number; centerY: number; startRotation: number; pointerAngle: number }
   | {
       type: "resize";
       layerId: string;
@@ -78,6 +80,7 @@ type LayerInteraction =
       fixedY: number;
       startWidth: number;
       startHeight: number;
+      rotation: number;
     };
 
 const fallbackPresets: KeyboardPreset[] = [
@@ -508,6 +511,7 @@ export default function App() {
               y: 60 + index * 24,
               width: Math.min(320, image.width),
               height: Math.min(180, image.height),
+              rotation: 0,
               opacity: 0.9,
             },
           ]);
@@ -947,7 +951,11 @@ function ProjectionDesigner({
 
     const drawLayer = (targetCtx: CanvasRenderingContext2D, layer: ProjectionLayer, x: number, y: number, width: number, height: number) => {
       targetCtx.globalAlpha = layer.opacity;
-      targetCtx.drawImage(layer.image, x, y, width, height);
+      targetCtx.save();
+      targetCtx.translate(x + width / 2, y + height / 2);
+      targetCtx.rotate(layer.rotation);
+      targetCtx.drawImage(layer.image, -width / 2, -height / 2, width, height);
+      targetCtx.restore();
     };
 
     layersToRender.forEach((layer) => {
@@ -1025,11 +1033,14 @@ function ProjectionDesigner({
   }
 
   function localLayerPoint(layer: ProjectionLayer, point: { x: number; y: number }) {
-    return { x: point.x - layer.x, y: point.y - layer.y };
+    const center = layerCenter(layer);
+    const local = rotatePoint({ x: point.x - center.x, y: point.y - center.y }, -layer.rotation);
+    return { x: local.x + layer.width / 2, y: local.y + layer.height / 2 };
   }
 
   function hitLayer(layer: ProjectionLayer, point: { x: number; y: number }) {
-    return point.x >= layer.x && point.x <= layer.x + layer.width && point.y >= layer.y && point.y <= layer.y + layer.height;
+    const local = localLayerPoint(layer, point);
+    return local.x >= 0 && local.x <= layer.width && local.y >= 0 && local.y <= layer.height;
   }
 
   function commitLayers(nextLayers: ProjectionLayer[]) {
@@ -1049,6 +1060,19 @@ function ProjectionDesigner({
         commitLayers(nextLayers);
         return;
       }
+      if (handle === "rotate") {
+        const center = layerCenter(selectedLayer);
+        dragRef.current = {
+          type: "rotate",
+          layerId: selectedLayer.id,
+          centerX: center.x,
+          centerY: center.y,
+          startRotation: selectedLayer.rotation,
+          pointerAngle: angleFrom(center.x, center.y, point),
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
       if (handle) {
         const fixed = resizeFixedPoint(selectedLayer, handle);
         dragRef.current = {
@@ -1059,6 +1083,7 @@ function ProjectionDesigner({
           fixedY: fixed.y,
           startWidth: selectedLayer.width,
           startHeight: selectedLayer.height,
+          rotation: selectedLayer.rotation,
         };
         event.currentTarget.setPointerCapture(event.pointerId);
         return;
@@ -1070,8 +1095,7 @@ function ProjectionDesigner({
       .find((item) => hitLayer(item, point));
     if (layer) {
       setSelectedLayerId(layer.id);
-      const local = localLayerPoint(layer, point);
-      dragRef.current = { type: "move", layerId: layer.id, offsetX: local.x, offsetY: local.y };
+      dragRef.current = { type: "move", layerId: layer.id, startX: layer.x, startY: layer.y, pointerX: point.x, pointerY: point.y };
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
@@ -1087,7 +1111,8 @@ function ProjectionDesigner({
     const point = canvasPoint(event);
     const nextLayers = layersRef.current.map((layer) => {
       if (layer.id !== drag.layerId) return layer;
-      if (drag.type === "move") return { ...layer, x: point.x - drag.offsetX, y: point.y - drag.offsetY };
+      if (drag.type === "move") return { ...layer, x: drag.startX + point.x - drag.pointerX, y: drag.startY + point.y - drag.pointerY };
+      if (drag.type === "rotate") return { ...layer, rotation: drag.startRotation + angleFrom(drag.centerX, drag.centerY, point) - drag.pointerAngle };
       return resizeLayer(layer, drag, point);
     });
     layersRef.current = nextLayers;
@@ -1117,26 +1142,35 @@ function ProjectionDesigner({
 
 const HANDLE_SIZE = 14;
 const DELETE_HANDLE_SIZE = 18;
+const ROTATE_HANDLE_SIZE = 16;
+const ROTATE_HANDLE_OFFSET = 34;
 const MIN_LAYER_SIZE = 24;
 
 function layerHandles(layer: ProjectionLayer) {
-  const half = HANDLE_SIZE / 2;
+  const corners = layerCorners(layer);
+  const topCenter = rotatedLayerPoint(layer, layer.width / 2, 0);
   return {
-    nw: { x: layer.x - half, y: layer.y - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
-    ne: { x: layer.x + layer.width - half, y: layer.y - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
-    se: { x: layer.x + layer.width - half, y: layer.y + layer.height - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
-    sw: { x: layer.x - half, y: layer.y + layer.height - half, width: HANDLE_SIZE, height: HANDLE_SIZE },
-    delete: { x: layer.x + layer.width + 6, y: layer.y - DELETE_HANDLE_SIZE - 6, width: DELETE_HANDLE_SIZE, height: DELETE_HANDLE_SIZE },
+    nw: centeredRect(corners.nw, HANDLE_SIZE),
+    ne: centeredRect(corners.ne, HANDLE_SIZE),
+    se: centeredRect(corners.se, HANDLE_SIZE),
+    sw: centeredRect(corners.sw, HANDLE_SIZE),
+    rotate: centeredRect(rotatedLayerPoint(layer, layer.width / 2, -ROTATE_HANDLE_OFFSET), ROTATE_HANDLE_SIZE),
+    delete: centeredRect({ x: topCenter.x + Math.cos(layer.rotation) * (layer.width / 2 + 18), y: topCenter.y + Math.sin(layer.rotation) * (layer.width / 2 + 18) }, DELETE_HANDLE_SIZE),
   };
+}
+
+function centeredRect(point: { x: number; y: number }, size: number) {
+  return { x: point.x - size / 2, y: point.y - size / 2, width: size, height: size };
 }
 
 function hitRect(rect: { x: number; y: number; width: number; height: number }, point: { x: number; y: number }) {
   return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
-function hitLayerHandle(layer: ProjectionLayer, point: { x: number; y: number }): ResizeHandle | "delete" | null {
+function hitLayerHandle(layer: ProjectionLayer, point: { x: number; y: number }): ResizeHandle | "delete" | "rotate" | null {
   const handles = layerHandles(layer);
   if (hitRect(handles.delete, point)) return "delete";
+  if (hitRect(handles.rotate, point)) return "rotate";
   if (hitRect(handles.nw, point)) return "nw";
   if (hitRect(handles.ne, point)) return "ne";
   if (hitRect(handles.se, point)) return "se";
@@ -1145,50 +1179,101 @@ function hitLayerHandle(layer: ProjectionLayer, point: { x: number; y: number })
 }
 
 function resizeFixedPoint(layer: ProjectionLayer, handle: ResizeHandle) {
-  if (handle === "nw") return { x: layer.x + layer.width, y: layer.y + layer.height };
-  if (handle === "ne") return { x: layer.x, y: layer.y + layer.height };
-  if (handle === "se") return { x: layer.x, y: layer.y };
-  return { x: layer.x + layer.width, y: layer.y };
+  const corners = layerCorners(layer);
+  if (handle === "nw") return corners.se;
+  if (handle === "ne") return corners.sw;
+  if (handle === "se") return corners.nw;
+  return corners.ne;
 }
 
 function resizeLayer(layer: ProjectionLayer, interaction: Extract<LayerInteraction, { type: "resize" }>, point: { x: number; y: number }): ProjectionLayer {
-  const rawWidth = interaction.handle === "nw" || interaction.handle === "sw" ? interaction.fixedX - point.x : point.x - interaction.fixedX;
-  const rawHeight = interaction.handle === "nw" || interaction.handle === "ne" ? interaction.fixedY - point.y : point.y - interaction.fixedY;
+  const pointer = rotatePoint({ x: point.x - interaction.fixedX, y: point.y - interaction.fixedY }, -interaction.rotation);
+  const rawWidth = interaction.handle === "nw" || interaction.handle === "sw" ? -pointer.x : pointer.x;
+  const rawHeight = interaction.handle === "nw" || interaction.handle === "ne" ? -pointer.y : pointer.y;
   const scale = Math.max(MIN_LAYER_SIZE / interaction.startWidth, MIN_LAYER_SIZE / interaction.startHeight, rawWidth / interaction.startWidth, rawHeight / interaction.startHeight);
   const width = interaction.startWidth * scale;
   const height = interaction.startHeight * scale;
+  const fixedLocal =
+    interaction.handle === "nw"
+      ? { x: width / 2, y: height / 2 }
+      : interaction.handle === "ne"
+        ? { x: -width / 2, y: height / 2 }
+        : interaction.handle === "se"
+          ? { x: -width / 2, y: -height / 2 }
+          : { x: width / 2, y: -height / 2 };
+  const centerOffset = rotatePoint(fixedLocal, interaction.rotation);
+  const center = { x: interaction.fixedX - centerOffset.x, y: interaction.fixedY - centerOffset.y };
   return {
     ...layer,
-    x: interaction.handle === "nw" || interaction.handle === "sw" ? interaction.fixedX - width : interaction.fixedX,
-    y: interaction.handle === "nw" || interaction.handle === "ne" ? interaction.fixedY - height : interaction.fixedY,
+    x: center.x - width / 2,
+    y: center.y - height / 2,
     width,
     height,
   };
 }
 
+function layerCenter(layer: ProjectionLayer) {
+  return { x: layer.x + layer.width / 2, y: layer.y + layer.height / 2 };
+}
+
+function rotatePoint(point: { x: number; y: number }, angle: number) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return { x: point.x * cos - point.y * sin, y: point.x * sin + point.y * cos };
+}
+
+function rotatedLayerPoint(layer: ProjectionLayer, x: number, y: number) {
+  const center = layerCenter(layer);
+  const rotated = rotatePoint({ x: x - layer.width / 2, y: y - layer.height / 2 }, layer.rotation);
+  return { x: center.x + rotated.x, y: center.y + rotated.y };
+}
+
+function layerCorners(layer: ProjectionLayer) {
+  return {
+    nw: rotatedLayerPoint(layer, 0, 0),
+    ne: rotatedLayerPoint(layer, layer.width, 0),
+    se: rotatedLayerPoint(layer, layer.width, layer.height),
+    sw: rotatedLayerPoint(layer, 0, layer.height),
+  };
+}
+
+function angleFrom(centerX: number, centerY: number, point: { x: number; y: number }) {
+  return Math.atan2(point.y - centerY, point.x - centerX);
+}
+
 function drawLayerHandles(ctx: CanvasRenderingContext2D, layer: ProjectionLayer, dpr: number) {
-  const x = layer.x * dpr;
-  const y = layer.y * dpr;
-  const width = layer.width * dpr;
-  const height = layer.height * dpr;
+  const corners = layerCorners(layer);
+  const scaledCorners = [corners.nw, corners.ne, corners.se, corners.sw].map((point) => ({ x: point.x * dpr, y: point.y * dpr }));
+  const handles = layerHandles(layer);
   const handleSize = HANDLE_SIZE * dpr;
   const deleteSize = DELETE_HANDLE_SIZE * dpr;
-  const half = handleSize / 2;
+  const rotateSize = ROTATE_HANDLE_SIZE * dpr;
 
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.strokeStyle = "#64c6b0";
   ctx.lineWidth = 2 * dpr;
   ctx.setLineDash([6 * dpr, 4 * dpr]);
-  ctx.strokeRect(x, y, width, height);
+  ctx.beginPath();
+  ctx.moveTo(scaledCorners[0].x, scaledCorners[0].y);
+  scaledCorners.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+  ctx.closePath();
+  ctx.stroke();
   ctx.setLineDash([]);
 
-  [
-    [x - half, y - half],
-    [x + width - half, y - half],
-    [x + width - half, y + height - half],
-    [x - half, y + height - half],
-  ].forEach(([handleX, handleY]) => {
+  const topCenter = rotatedLayerPoint(layer, layer.width / 2, 0);
+  const rotateCenter = { x: (handles.rotate.x + handles.rotate.width / 2) * dpr, y: (handles.rotate.y + handles.rotate.height / 2) * dpr };
+  ctx.strokeStyle = "#64c6b0";
+  ctx.lineWidth = 1.6 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(topCenter.x * dpr, topCenter.y * dpr);
+  ctx.lineTo(rotateCenter.x, rotateCenter.y);
+  ctx.stroke();
+
+  (["nw", "ne", "se", "sw"] as ResizeHandle[]).forEach((handle) => {
+    const rect = handles[handle];
+    const handleX = rect.x * dpr;
+    const handleY = rect.y * dpr;
     ctx.fillStyle = "#101416";
     ctx.strokeStyle = "#64c6b0";
     ctx.lineWidth = 2 * dpr;
@@ -1196,8 +1281,21 @@ function drawLayerHandles(ctx: CanvasRenderingContext2D, layer: ProjectionLayer,
     ctx.strokeRect(handleX, handleY, handleSize, handleSize);
   });
 
-  const deleteX = x + width + (6 + DELETE_HANDLE_SIZE / 2) * dpr;
-  const deleteY = y - (6 + DELETE_HANDLE_SIZE / 2) * dpr;
+  ctx.beginPath();
+  ctx.arc(rotateCenter.x, rotateCenter.y, rotateSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = "#101416";
+  ctx.fill();
+  ctx.strokeStyle = "#64c6b0";
+  ctx.lineWidth = 2 * dpr;
+  ctx.stroke();
+  ctx.strokeStyle = "#64c6b0";
+  ctx.lineWidth = 1.7 * dpr;
+  ctx.beginPath();
+  ctx.arc(rotateCenter.x, rotateCenter.y, rotateSize * 0.23, Math.PI * 0.15, Math.PI * 1.65);
+  ctx.stroke();
+
+  const deleteX = (handles.delete.x + handles.delete.width / 2) * dpr;
+  const deleteY = (handles.delete.y + handles.delete.height / 2) * dpr;
   ctx.beginPath();
   ctx.arc(deleteX, deleteY, deleteSize / 2, 0, Math.PI * 2);
   ctx.fillStyle = "#ef8354";
