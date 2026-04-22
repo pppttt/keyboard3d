@@ -122,8 +122,8 @@ export class Keyboard {
     const sourceY = (rect.y / rect.frameH) * projectionCanvas.height;
     const sourceW = (rect.w / rect.frameW) * projectionCanvas.width;
     const sourceH = (rect.h / rect.frameH) * projectionCanvas.height;
-    const sideDepthX = Math.max(6, sourceW * 0.34);
-    const sideDepthY = Math.max(6, sourceH * 0.34);
+    const sideDepthX = Math.min(sourceW * 0.28, Math.max(4, sourceW * 0.18));
+    const sideDepthY = Math.min(sourceH * 0.28, Math.max(4, sourceH * 0.18));
 
     const drawSlice = (sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw = cell, dh = cell) => {
       const clippedX = Math.max(0, sx);
@@ -141,11 +141,11 @@ export class Keyboard {
       ctx.drawImage(projectionCanvas, clippedX, clippedY, clippedW, clippedH, dx + offsetX, dy + offsetY, destW, destH);
     };
 
-    drawSlice(sourceX, sourceY, sourceW, sourceH, cell, cell);
-    drawSlice(sourceX, sourceY, sourceW, sideDepthY, cell, 0);
-    drawSlice(sourceX, sourceY, sideDepthX, sourceH, 0, cell);
-    drawSlice(sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, cell * 2, cell);
-    drawSlice(sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, cell, cell * 2);
+    drawSlice(sourceX + sideDepthX, sourceY + sideDepthY, sourceW - sideDepthX * 2, sourceH - sideDepthY * 2, cell, cell);
+    drawSlice(sourceX + sideDepthX, sourceY, sourceW - sideDepthX * 2, sideDepthY, cell, 0);
+    drawSlice(sourceX, sourceY + sideDepthY, sideDepthX, sourceH - sideDepthY * 2, 0, cell);
+    drawSlice(sourceX + sourceW - sideDepthX, sourceY + sideDepthY, sideDepthX, sourceH - sideDepthY * 2, cell * 2, cell);
+    drawSlice(sourceX + sideDepthX, sourceY + sourceH - sideDepthY, sourceW - sideDepthX * 2, sideDepthY, cell, cell * 2);
 
     const hasContent = Keyboard.hasVisiblePixels(ctx, canvas.width, canvas.height);
     const texture = new THREE.CanvasTexture(canvas);

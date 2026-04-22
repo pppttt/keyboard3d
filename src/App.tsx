@@ -310,6 +310,8 @@ export default function App() {
   const [layoutError, setLayoutError] = useState("");
   const [selectedKeys, setSelectedKeys] = useState([0]);
   const [projectionLayers, setProjectionLayers] = useState<ProjectionLayer[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const activeProfile = profiles[config.profileId] ?? profiles.cherry;
   const selectedKey = selectedKeys[selectedKeys.length - 1] ?? 0;
   const isMultiSelecting = selectedKeys.length > 1;
@@ -528,22 +530,33 @@ export default function App() {
   }
 
   async function onExportProject() {
-    const blob = await exportProjectZip({
-      mode,
-      presetId,
-      layoutPath,
-      config,
-      layers: projectionLayers,
-      projectionCanvas: projectionCanvasRef.current,
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `keyboard3d-export-${timestampForFile()}.zip`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportError("");
+    try {
+      const blob = await exportProjectZip({
+        mode,
+        presetId,
+        layoutPath,
+        config,
+        layers: projectionLayers,
+        projectionCanvas: projectionCanvasRef.current,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `keyboard3d-export-${timestampForFile()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setExportError(message || "Export failed.");
+      console.error("Export failed", error);
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   function onIconPngChange(event: ChangeEvent<HTMLInputElement>) {
@@ -740,11 +753,12 @@ export default function App() {
                   Add PNG
                   <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={onPngChange} />
                 </label>
-                <button className="secondary-button" type="button" onClick={onExportProject}>
-                  Export
+                <button className="secondary-button" type="button" disabled={isExporting} onClick={onExportProject}>
+                  {isExporting ? "Exporting..." : "Export"}
                 </button>
               </div>
             </div>
+            {exportError ? <p className="error">Export failed: {exportError}</p> : null}
             <ProjectionDesigner
               keys={config.layoutKeys}
               layers={projectionLayers}
@@ -1361,6 +1375,7 @@ async function exportProjectZip(input: ExportProjectInput) {
     }),
   );
   const transferSheet = await createHeatTransferSheet(input.config, input.projectionCanvas);
+  const faceCuts = await createHeatTransferFaceCuts(input.config, input.projectionCanvas);
 
   const project = {
     schemaVersion: 1,
@@ -1381,6 +1396,12 @@ async function exportProjectZip(input: ExportProjectInput) {
         height: transferSheet.canvas.height / HEAT_TRANSFER_PX_PER_MM,
       },
       layout: transferSheet.layout,
+    },
+    heatTransferFaces: {
+      directory: "production/key-faces",
+      dpi: HEAT_TRANSFER_DPI,
+      pxPerMm: HEAT_TRANSFER_PX_PER_MM,
+      files: faceCuts.map(({ data, ...face }) => face),
     },
     projectionLayers: imageFiles.map(({ layer, image, path }) => ({
       id: layer.id,
@@ -1403,6 +1424,7 @@ async function exportProjectZip(input: ExportProjectInput) {
   return createZip([
     { path: "project.json", data: encoder.encode(JSON.stringify(project, null, 2)) },
     { path: "production/heat-transfer-sheet.png", data: transferSheet.png },
+    ...faceCuts.map(({ path, data }) => ({ path, data })),
     ...imageFiles.map(({ image, path }) => ({ path, data: image.data })),
   ]);
 }
@@ -1423,6 +1445,8 @@ const HEAT_TRANSFER_BLEED_PX = 2;
 const HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX = 6;
 const HEAT_TRANSFER_SEAM_REPAIR_PX = 10;
 
+type HeatTransferFaceName = "top" | "back" | "front" | "left" | "right";
+
 type HeatTransferTile = {
   key: ParsedKey;
   topW: number;
@@ -1433,6 +1457,20 @@ type HeatTransferTile = {
   projectedBottomH: number;
   projectedInsetX: number;
   projectedInsetY: number;
+};
+
+type HeatTransferSourceRect = {
+  sourceX: number;
+  sourceY: number;
+  sourceW: number;
+  sourceH: number;
+};
+
+type HeatTransferFrame = {
+  minX: number;
+  minY: number;
+  frameW: number;
+  frameH: number;
 };
 
 async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
@@ -1522,6 +1560,187 @@ async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HT
   return { canvas, png: await canvasToPngBytes(canvas), layout };
 }
 
+async function createHeatTransferFaceCuts(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
+  const keys = config.layoutKeys;
+  if (!keys.length) return [];
+
+  const frame = heatTransferFrameForKeys(keys);
+  const cuts: Array<{
+    path: string;
+    data: Uint8Array;
+    keyIndex: number;
+    keyLabel: string;
+    face: HeatTransferFaceName;
+    sizePx: { width: number; height: number };
+    sizeMm: { width: number; height: number };
+  }> = [];
+
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex];
+    const tile = heatTransferTileForKey(config, key);
+    const override = config.keyOverrides[keyIndex] ?? {};
+    const keyLabel = resolveKeyLabel(key, override);
+    const source = projectionCanvas ? heatTransferSourceForKey(tile, projectionCanvas, frame) : null;
+    const faceNames: HeatTransferFaceName[] = ["top", "back", "front", "left", "right"];
+
+    for (const face of faceNames) {
+      const canvas = await createHeatTransferFaceCanvas(config, projectionCanvas, tile, keyIndex, face, source);
+      const keySlug = safeFileBase(`${String(keyIndex + 1).padStart(3, "0")}-${keyLabel}`);
+      const path = `production/key-faces/${keySlug}-${face}.png`;
+      cuts.push({
+        path,
+        data: await canvasToPngBytes(canvas),
+        keyIndex,
+        keyLabel,
+        face,
+        sizePx: { width: canvas.width, height: canvas.height },
+        sizeMm: {
+          width: canvas.width / HEAT_TRANSFER_PX_PER_MM,
+          height: canvas.height / HEAT_TRANSFER_PX_PER_MM,
+        },
+      });
+    }
+  }
+
+  return cuts;
+}
+
+async function createHeatTransferFaceCanvas(
+  config: SceneConfig,
+  projectionCanvas: HTMLCanvasElement | null,
+  tile: HeatTransferTile,
+  keyIndex: number,
+  face: HeatTransferFaceName,
+  source: HeatTransferSourceRect | null,
+) {
+  const canvas = document.createElement("canvas");
+  const faceSize = heatTransferFaceSize(tile, face);
+  canvas.width = faceSize.width;
+  canvas.height = faceSize.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+
+  drawHeatTransferFaceBase(ctx, tile, config, keyIndex, face);
+  if (projectionCanvas && source) {
+    drawHeatTransferFaceArtwork(ctx, projectionCanvas, tile, face, source);
+  }
+  await drawHeatTransferFaceLegends(ctx, tile, config, keyIndex, face);
+  return canvas;
+}
+
+function heatTransferFrameForKeys(keys: ParsedKey[]): HeatTransferFrame {
+  const minX = Math.min(...keys.map((key) => key.x));
+  const minY = Math.min(...keys.map((key) => key.y));
+  const maxX = Math.max(...keys.map((key) => key.x + key.w));
+  const maxY = Math.max(...keys.map((key) => key.y + key.h));
+  return {
+    minX,
+    minY,
+    frameW: Math.max(1, maxX - minX),
+    frameH: Math.max(1, maxY - minY),
+  };
+}
+
+function heatTransferSourceForKey(tile: HeatTransferTile, projectionCanvas: HTMLCanvasElement, frame: HeatTransferFrame): HeatTransferSourceRect {
+  return {
+    sourceX: ((tile.key.x - frame.minX) / frame.frameW) * projectionCanvas.width,
+    sourceY: ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height,
+    sourceW: (tile.key.w / frame.frameW) * projectionCanvas.width,
+    sourceH: (tile.key.h / frame.frameH) * projectionCanvas.height,
+  };
+}
+
+function heatTransferFaceSize(tile: HeatTransferTile, face: HeatTransferFaceName) {
+  if (face === "left" || face === "right") return { width: tile.sideX, height: tile.topH };
+  if (face === "back" || face === "front") return { width: tile.topW, height: tile.sideY };
+  return { width: tile.topW, height: tile.topH };
+}
+
+function drawHeatTransferFaceBase(
+  ctx: CanvasRenderingContext2D,
+  tile: HeatTransferTile,
+  config: SceneConfig,
+  keyIndex: number,
+  face: HeatTransferFaceName,
+) {
+  const override = config.keyOverrides[keyIndex] ?? {};
+  const color = override.color ?? tile.key.color ?? config.keycapColor;
+  ctx.fillStyle = face === "top" ? color : shadeColor(color, -12);
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+function drawHeatTransferFaceArtwork(
+  ctx: CanvasRenderingContext2D,
+  projectionCanvas: HTMLCanvasElement,
+  tile: HeatTransferTile,
+  face: HeatTransferFaceName,
+  source: HeatTransferSourceRect,
+) {
+  const sourceBandX = Math.max(1, source.sourceW * (tile.projectedInsetX / tile.projectedBottomW));
+  const sourceBandY = Math.max(1, source.sourceH * (tile.projectedInsetY / tile.projectedBottomH));
+  const sourceCenterW = Math.max(1, source.sourceW - sourceBandX * 2);
+  const sourceCenterH = Math.max(1, source.sourceH - sourceBandY * 2);
+  const sx1 = source.sourceX + sourceBandX;
+  const sx2 = source.sourceX + source.sourceW - sourceBandX;
+  const sy1 = source.sourceY + sourceBandY;
+  const sy2 = source.sourceY + source.sourceH - sourceBandY;
+
+  if (face === "top") {
+    drawClippedImage(ctx, projectionCanvas, sx1, sy1, sourceCenterW, sourceCenterH, 0, 0, tile.topW, tile.topH);
+  } else if (face === "back") {
+    drawClippedImage(ctx, projectionCanvas, sx1, source.sourceY, sourceCenterW, sourceBandY, 0, 0, tile.topW, tile.sideY);
+  } else if (face === "front") {
+    drawClippedImage(ctx, projectionCanvas, sx1, sy2, sourceCenterW, sourceBandY, 0, 0, tile.topW, tile.sideY);
+  } else if (face === "left") {
+    drawClippedImage(ctx, projectionCanvas, source.sourceX, sy1, sourceBandX, sourceCenterH, 0, 0, tile.sideX, tile.topH);
+  } else {
+    drawClippedImage(ctx, projectionCanvas, sx2, sy1, sourceBandX, sourceCenterH, 0, 0, tile.sideX, tile.topH);
+  }
+}
+
+async function drawHeatTransferFaceLegends(
+  ctx: CanvasRenderingContext2D,
+  tile: HeatTransferTile,
+  config: SceneConfig,
+  keyIndex: number,
+  face: HeatTransferFaceName,
+) {
+  const { entries, legendScale, legendFont } = heatTransferLegendContext(tile, config, keyIndex);
+  if (face === "top") {
+    drawLegendEntries(ctx, entries.filter((entry) => entry.index < 9), {
+      x: 0,
+      y: 0,
+      width: tile.topW,
+      height: tile.topH,
+      fontScale: Math.min(tile.topW, tile.topH) / 512,
+      legendScale,
+      legendFont,
+    });
+
+    const iconUrl = config.keyOverrides[keyIndex]?.iconImageUrl;
+    if (!iconUrl) return;
+    const icon = await loadExportImage(iconUrl);
+    if (!icon) return;
+    const override = config.keyOverrides[keyIndex] ?? {};
+    const [iconX, iconY] = EXPORT_LEGEND_POSITIONS[Math.max(0, Math.min(8, override.iconPosition ?? 4))] ?? EXPORT_LEGEND_POSITIONS[4];
+    const iconSize = tile.topW * 0.42 * Math.max(0.2, Math.min(2.4, override.iconScale ?? 1));
+    ctx.drawImage(icon, iconX * tile.topW - iconSize / 2, iconY * tile.topH - iconSize / 2, iconSize, iconSize);
+    return;
+  }
+
+  if (face === "front") {
+    drawLegendEntries(ctx, entries.filter((entry) => entry.index >= 9), {
+      x: 0,
+      y: 0,
+      width: tile.topW,
+      height: tile.sideY,
+      fontScale: Math.min(tile.topW, tile.sideY) / 512,
+      legendScale,
+      legendFont,
+    });
+  }
+}
+
 function groupKeysForTransfer(keys: ParsedKey[]) {
   const rows: ParsedKey[][] = [];
   keys
@@ -1569,7 +1788,7 @@ async function drawHeatTransferTile(
   tile: HeatTransferTile,
   x: number,
   y: number,
-  frame: { minX: number; minY: number; frameW: number; frameH: number; config: SceneConfig; keyIndex: number },
+  frame: HeatTransferFrame & { config: SceneConfig; keyIndex: number },
 ) {
   drawHeatTransferKeyBase(ctx, tile, x, y, frame.config, frame.keyIndex);
   if (projectionCanvas) {
@@ -1688,26 +1907,14 @@ async function drawHeatTransferLegends(
   config: SceneConfig,
   keyIndex: number,
 ) {
-  const override = config.keyOverrides[keyIndex] ?? {};
-  const labels = override.labels?.length ? override.labels : tile.key.labels;
-  const entries = labels
-    .map((label, index) => ({
-      index,
-      label: normalizeExportLegend(label ?? ""),
-      color: override.legendColor ?? config.legendColor ?? tile.key.textColors[index] ?? tile.key.textColor,
-      size: tile.key.textSizes[index] ?? tile.key.textSize ?? 3,
-    }))
-    .filter((entry) => entry.label);
-  const fontScale = Math.min(tile.topW, tile.topH) / 512;
-  const legendScale = override.legendScale ?? config.legendScale;
-  const legendFont = override.legendFont ?? config.legendFont;
+  const { entries, legendScale, legendFont } = heatTransferLegendContext(tile, config, keyIndex);
 
   drawLegendEntries(ctx, entries.filter((entry) => entry.index < 9), {
     x: x + tile.sideX,
     y: y + tile.sideY,
     width: tile.topW,
     height: tile.topH,
-    fontScale,
+    fontScale: Math.min(tile.topW, tile.topH) / 512,
     legendScale,
     legendFont,
   });
@@ -1721,6 +1928,7 @@ async function drawHeatTransferLegends(
     legendFont,
   });
 
+  const override = config.keyOverrides[keyIndex] ?? {};
   const iconUrl = override.iconImageUrl;
   if (!iconUrl) return;
   const icon = await loadExportImage(iconUrl);
@@ -1728,6 +1936,22 @@ async function drawHeatTransferLegends(
   const [iconX, iconY] = EXPORT_LEGEND_POSITIONS[Math.max(0, Math.min(8, override.iconPosition ?? 4))] ?? EXPORT_LEGEND_POSITIONS[4];
   const iconSize = tile.topW * 0.42 * Math.max(0.2, Math.min(2.4, override.iconScale ?? 1));
   ctx.drawImage(icon, x + tile.sideX + iconX * tile.topW - iconSize / 2, y + tile.sideY + iconY * tile.topH - iconSize / 2, iconSize, iconSize);
+}
+
+function heatTransferLegendContext(tile: HeatTransferTile, config: SceneConfig, keyIndex: number) {
+  const override = config.keyOverrides[keyIndex] ?? {};
+  const labels = override.labels?.length ? override.labels : tile.key.labels;
+  const entries = labels
+    .map((label, index) => ({
+      index,
+      label: normalizeExportLegend(label ?? ""),
+      color: override.legendColor ?? config.legendColor ?? tile.key.textColors[index] ?? tile.key.textColor,
+      size: tile.key.textSizes[index] ?? tile.key.textSize ?? 3,
+    }))
+    .filter((entry) => entry.label);
+  const legendScale = override.legendScale ?? config.legendScale;
+  const legendFont = override.legendFont ?? config.legendFont;
+  return { entries, legendScale, legendFont };
 }
 
 const EXPORT_LEGEND_POSITIONS: Array<[number, number]> = [
