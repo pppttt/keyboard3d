@@ -1422,6 +1422,7 @@ const HEAT_TRANSFER_KEY_SPACING_MM = 5;
 const HEAT_TRANSFER_SIDE_RATIO = 0.34;
 const HEAT_TRANSFER_BLEED_PX = 2;
 const HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX = 6;
+const HEAT_TRANSFER_SEAM_REPAIR_PX = 10;
 
 async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
   const keys = config.layoutKeys;
@@ -1551,6 +1552,7 @@ async function drawHeatTransferTile(
     drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH);
     drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap);
     drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
+    repairHeatTransferSeams(ctx, projectionCanvas, tile, x, y, frame.config, frame.keyIndex, { sourceX, sourceY, sourceW, sourceH });
   }
   await drawHeatTransferLegends(ctx, tile, x, y, frame.config, frame.keyIndex);
 }
@@ -1573,6 +1575,38 @@ function drawHeatTransferKeyBase(
   ctx.fillRect(x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap);
   ctx.fillStyle = color;
   ctx.fillRect(x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
+}
+
+function repairHeatTransferSeams(
+  ctx: CanvasRenderingContext2D,
+  projectionCanvas: HTMLCanvasElement,
+  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  x: number,
+  y: number,
+  config: SceneConfig,
+  keyIndex: number,
+  source: { sourceX: number; sourceY: number; sourceW: number; sourceH: number },
+) {
+  const seam = Math.min(HEAT_TRANSFER_SEAM_REPAIR_PX, tile.sideX / 2, tile.sideY / 2);
+  const topX = x + tile.sideX;
+  const topY = y + tile.sideY;
+  const override = config.keyOverrides[keyIndex] ?? {};
+  const color = override.color ?? tile.key.color ?? config.keycapColor;
+
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.fillRect(topX, topY - seam, tile.topW, seam * 2);
+  ctx.fillRect(topX, topY + tile.topH - seam, tile.topW, seam * 2);
+  ctx.fillRect(topX - seam, topY, seam * 2, tile.topH);
+  ctx.fillRect(topX + tile.topW - seam, topY, seam * 2, tile.topH);
+  ctx.restore();
+
+  const sourceSeamX = (source.sourceW / tile.topW) * seam;
+  const sourceSeamY = (source.sourceH / tile.topH) * seam;
+  drawClippedImage(ctx, projectionCanvas, source.sourceX, source.sourceY, source.sourceW, sourceSeamY, topX, topY - seam, tile.topW, seam * 2);
+  drawClippedImage(ctx, projectionCanvas, source.sourceX, source.sourceY + source.sourceH - sourceSeamY, source.sourceW, sourceSeamY, topX, topY + tile.topH - seam, tile.topW, seam * 2);
+  drawClippedImage(ctx, projectionCanvas, source.sourceX, source.sourceY, sourceSeamX, source.sourceH, topX - seam, topY, seam * 2, tile.topH);
+  drawClippedImage(ctx, projectionCanvas, source.sourceX + source.sourceW - sourceSeamX, source.sourceY, sourceSeamX, source.sourceH, topX + tile.topW - seam, topY, seam * 2, tile.topH);
 }
 
 async function drawHeatTransferLegends(
