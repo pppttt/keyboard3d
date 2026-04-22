@@ -66,6 +66,8 @@ type ProjectionLayer = {
   opacity: number;
 };
 
+const PROJECTION_PUBLISH_INTERVAL_MS = 96;
+
 const fallbackPresets: KeyboardPreset[] = [
   {
     id: "atelier-60",
@@ -881,6 +883,9 @@ function ProjectionDesigner({
   const layersRef = useRef(layers);
   const pendingLayersRef = useRef<ProjectionLayer[] | null>(null);
   const layerFrameRef = useRef(0);
+  const pendingProjectionLayersRef = useRef<ProjectionLayer[] | null>(null);
+  const projectionPublishTimerRef = useRef<number | null>(null);
+  const lastProjectionPublishRef = useRef(0);
 
   useEffect(() => {
     layersRef.current = layers;
@@ -889,6 +894,7 @@ function ProjectionDesigner({
   useEffect(() => {
     return () => {
       if (layerFrameRef.current) cancelAnimationFrame(layerFrameRef.current);
+      if (projectionPublishTimerRef.current !== null) window.clearTimeout(projectionPublishTimerRef.current);
     };
   }, []);
 
@@ -912,11 +918,12 @@ function ProjectionDesigner({
     return { minX, minY, maxX, maxY };
   }, [keys]);
 
-  const renderProjectionCanvas = useCallback((layersToRender: ProjectionLayer[]) => {
+  const renderProjectionCanvas = useCallback((layersToRender: ProjectionLayer[], options?: { publish?: boolean }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const publish = options?.publish ?? true;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = canvas.getBoundingClientRect();
@@ -938,8 +945,6 @@ function ProjectionDesigner({
     const scale = Math.min((width - padding * 2) / layoutW, (height - padding * 2) / layoutH);
     const originX = (width - layoutW * scale) / 2;
     const originY = (height - layoutH * scale) / 2;
-    const layoutPixelW = layoutW * scale;
-    const layoutPixelH = layoutH * scale;
 
     const projectionScale = 128;
     const projection = projectionRef.current ?? document.createElement("canvas");
@@ -994,11 +999,34 @@ function ProjectionDesigner({
       ctx.fillText(key.label || String(index + 1), x + w / 2, y + h / 2);
     });
 
-    onProjectionCanvas(projection, layersToRender.length > 0);
+    if (publish) {
+      pendingProjectionLayersRef.current = null;
+      lastProjectionPublishRef.current = performance.now();
+      onProjectionCanvas(projection, layersToRender.length > 0);
+    }
   }, [keys, selectedKeys, frame, onProjectionCanvas]);
 
+  function cancelScheduledProjectionPublish() {
+    if (projectionPublishTimerRef.current === null) return;
+    window.clearTimeout(projectionPublishTimerRef.current);
+    projectionPublishTimerRef.current = null;
+  }
+
+  function scheduleProjectionPublish(nextLayers: ProjectionLayer[]) {
+    pendingProjectionLayersRef.current = nextLayers;
+    if (projectionPublishTimerRef.current !== null) return;
+
+    const elapsed = performance.now() - lastProjectionPublishRef.current;
+    const delay = Math.max(0, PROJECTION_PUBLISH_INTERVAL_MS - elapsed);
+    projectionPublishTimerRef.current = window.setTimeout(() => {
+      projectionPublishTimerRef.current = null;
+      const pending = pendingProjectionLayersRef.current;
+      if (pending) renderProjectionCanvas(pending, { publish: true });
+    }, delay);
+  }
+
   useEffect(() => {
-    renderProjectionCanvas(layers);
+    renderProjectionCanvas(layers, { publish: !dragRef.current });
   }, [layers, selectedLayerId, renderProjectionCanvas]);
 
   function canvasPoint(event: PointerEvent<HTMLCanvasElement>) {
@@ -1058,12 +1086,14 @@ function ProjectionDesigner({
       return { ...layer, x: point.x - drag.offsetX, y: point.y - drag.offsetY };
     });
     layersRef.current = nextLayers;
-    renderProjectionCanvas(nextLayers);
+    renderProjectionCanvas(nextLayers, { publish: false });
+    scheduleProjectionPublish(nextLayers);
     scheduleLayersChange(nextLayers);
   }
 
   function onPointerUp(event: PointerEvent<HTMLCanvasElement>) {
-    renderProjectionCanvas(layersRef.current);
+    cancelScheduledProjectionPublish();
+    renderProjectionCanvas(layersRef.current, { publish: true });
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
