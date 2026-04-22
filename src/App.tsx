@@ -1419,11 +1419,21 @@ const KEY_UNIT_MM = 19.05;
 const HEAT_TRANSFER_DPI = 300;
 const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
 const HEAT_TRANSFER_KEY_SPACING_MM = 5;
-const HEAT_TRANSFER_SIDE_RATIO = 0.34;
-const HEAT_TRANSFER_SOURCE_BAND_RATIO = 0.32;
 const HEAT_TRANSFER_BLEED_PX = 2;
 const HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX = 6;
 const HEAT_TRANSFER_SEAM_REPAIR_PX = 10;
+
+type HeatTransferTile = {
+  key: ParsedKey;
+  topW: number;
+  topH: number;
+  sideX: number;
+  sideY: number;
+  projectedBottomW: number;
+  projectedBottomH: number;
+  projectedInsetX: number;
+  projectedInsetY: number;
+};
 
 async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
   const keys = config.layoutKeys;
@@ -1445,19 +1455,7 @@ async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HT
 
   const rows = groupKeysForTransfer(keys);
   const tiles = rows.map((row) =>
-    row.map((key) => {
-      const topW = key.w * KEY_UNIT_MM * HEAT_TRANSFER_PX_PER_MM;
-      const topH = key.h * KEY_UNIT_MM * HEAT_TRANSFER_PX_PER_MM;
-      const sideX = Math.max(2 * HEAT_TRANSFER_PX_PER_MM, topW * HEAT_TRANSFER_SIDE_RATIO);
-      const sideY = Math.max(2 * HEAT_TRANSFER_PX_PER_MM, topH * HEAT_TRANSFER_SIDE_RATIO);
-      return {
-        key,
-        topW: Math.round(topW),
-        topH: Math.round(topH),
-        sideX: Math.round(sideX),
-        sideY: Math.round(sideY),
-      };
-    }),
+    row.map((key) => heatTransferTileForKey(config, key)),
   );
 
   const rowSizes = tiles.map((row) => ({
@@ -1513,6 +1511,7 @@ async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HT
           cornerHeightPx: unwrap.cornerH,
           centerPx: { x: tile.sideX, y: tile.sideY, width: tile.topW, height: tile.topH },
           sideDepthPx: { x: tile.sideX, y: tile.sideY },
+          projectedInsetPx: { x: tile.projectedInsetX, y: tile.projectedInsetY },
         },
       });
       cursorX += tileW + spacingPx;
@@ -1537,10 +1536,37 @@ function groupKeysForTransfer(keys: ParsedKey[]) {
   return rows;
 }
 
+function heatTransferTileForKey(config: SceneConfig, key: ParsedKey): HeatTransferTile {
+  const profile = profiles[config.profileId] ?? profiles.cherry;
+  const row = key.profileRow === "SB" ? config.rowId : key.profileRow;
+  const cfg = { ...profile.common, ...profile.rows[row], dishDepth: config.dishDepth };
+  const bottomWmm = profile.common.bottomKeyWidth + (key.w - 1) * KEY_UNIT_MM;
+  const bottomHmm = profile.common.bottomKeyHeight + (key.h - 1) * KEY_UNIT_MM;
+  const topWmm = Math.max(6, bottomWmm - profile.common.widthDifference);
+  const topHmm = Math.max(6, bottomHmm - profile.common.heightDifference);
+  const insetXmm = Math.max(0.1, (bottomWmm - topWmm) / 2);
+  const insetYmm = Math.max(0.1, (bottomHmm - topHmm) / 2);
+  const sideXmm = Math.hypot(insetXmm, cfg.totalDepth);
+  const sideYmm = Math.hypot(insetYmm, cfg.totalDepth);
+  const px = HEAT_TRANSFER_PX_PER_MM;
+
+  return {
+    key,
+    topW: Math.round(topWmm * px),
+    topH: Math.round(topHmm * px),
+    sideX: Math.round(sideXmm * px),
+    sideY: Math.round(sideYmm * px),
+    projectedBottomW: Math.max(1, bottomWmm * px),
+    projectedBottomH: Math.max(1, bottomHmm * px),
+    projectedInsetX: Math.max(1, insetXmm * px),
+    projectedInsetY: Math.max(1, insetYmm * px),
+  };
+}
+
 async function drawHeatTransferTile(
   ctx: CanvasRenderingContext2D,
   projectionCanvas: HTMLCanvasElement | null,
-  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  tile: HeatTransferTile,
   x: number,
   y: number,
   frame: { minX: number; minY: number; frameW: number; frameH: number; config: SceneConfig; keyIndex: number },
@@ -1559,13 +1585,13 @@ async function drawHeatTransferTile(
 function drawHeatTransferUnwrap3x3(
   ctx: CanvasRenderingContext2D,
   projectionCanvas: HTMLCanvasElement,
-  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  tile: HeatTransferTile,
   x: number,
   y: number,
   source: { sourceX: number; sourceY: number; sourceW: number; sourceH: number },
 ) {
-  const sourceBandX = Math.min(source.sourceW * HEAT_TRANSFER_SOURCE_BAND_RATIO, Math.max(6, source.sourceW * HEAT_TRANSFER_SIDE_RATIO));
-  const sourceBandY = Math.min(source.sourceH * HEAT_TRANSFER_SOURCE_BAND_RATIO, Math.max(6, source.sourceH * HEAT_TRANSFER_SIDE_RATIO));
+  const sourceBandX = Math.max(1, source.sourceW * (tile.projectedInsetX / tile.projectedBottomW));
+  const sourceBandY = Math.max(1, source.sourceH * (tile.projectedInsetY / tile.projectedBottomH));
   const sourceCenterW = Math.max(1, source.sourceW - sourceBandX * 2);
   const sourceCenterH = Math.max(1, source.sourceH - sourceBandY * 2);
   const { cornerW, cornerH } = heatTransferUnwrapMetrics(tile);
@@ -1598,16 +1624,16 @@ function drawHeatTransferUnwrap3x3(
   drawClippedImage(ctx, projectionCanvas, sx2, sy2, sourceBandX, sourceBandY, topX + tile.topW - cornerW, topY + tile.topH - overlap, cornerW + overlap, tile.sideY + overlap);
 }
 
-function heatTransferUnwrapMetrics(tile: { topW: number; topH: number; sideX: number; sideY: number }) {
+function heatTransferUnwrapMetrics(tile: HeatTransferTile) {
   return {
-    cornerW: Math.min(tile.sideX, Math.max(1, tile.topW * HEAT_TRANSFER_SOURCE_BAND_RATIO)),
-    cornerH: Math.min(tile.sideY, Math.max(1, tile.topH * HEAT_TRANSFER_SOURCE_BAND_RATIO)),
+    cornerW: Math.min(tile.sideX, Math.max(1, tile.topW * (tile.projectedInsetX / tile.projectedBottomW))),
+    cornerH: Math.min(tile.sideY, Math.max(1, tile.topH * (tile.projectedInsetY / tile.projectedBottomH))),
   };
 }
 
 function drawHeatTransferKeyBase(
   ctx: CanvasRenderingContext2D,
-  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  tile: HeatTransferTile,
   x: number,
   y: number,
   config: SceneConfig,
@@ -1656,7 +1682,7 @@ function repairHeatTransferSeams(
 
 async function drawHeatTransferLegends(
   ctx: CanvasRenderingContext2D,
-  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  tile: HeatTransferTile,
   x: number,
   y: number,
   config: SceneConfig,
