@@ -1360,7 +1360,7 @@ async function exportProjectZip(input: ExportProjectInput) {
       return { layer, image, path };
     }),
   );
-  const transferSheet = await createHeatTransferSheet(input.config.layoutKeys, input.projectionCanvas);
+  const transferSheet = await createHeatTransferSheet(input.config, input.projectionCanvas);
 
   const project = {
     schemaVersion: 1,
@@ -1421,7 +1421,8 @@ const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
 const HEAT_TRANSFER_KEY_SPACING_MM = 5;
 const HEAT_TRANSFER_SIDE_RATIO = 0.34;
 
-async function createHeatTransferSheet(keys: ParsedKey[], projectionCanvas: HTMLCanvasElement | null) {
+async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
+  const keys = config.layoutKeys;
   if (!keys.length) {
     const canvas = document.createElement("canvas");
     canvas.width = 1;
@@ -1468,16 +1469,20 @@ async function createHeatTransferSheet(keys: ParsedKey[], projectionCanvas: HTML
 
   const layout: Array<Record<string, unknown>> = [];
   let cursorY = paddingPx;
-  tiles.forEach((row, rowIndex) => {
+  for (let rowIndex = 0; rowIndex < tiles.length; rowIndex += 1) {
+    const row = tiles[rowIndex];
     let cursorX = paddingPx;
-    row.forEach((tile, columnIndex) => {
+    for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
+      const tile = row[columnIndex];
       const tileW = tile.sideX * 2 + tile.topW;
       const tileH = tile.sideY * 2 + tile.topH;
-      drawHeatTransferTile(ctx, projectionCanvas, tile, cursorX, cursorY, {
+      await drawHeatTransferTile(ctx, projectionCanvas, tile, cursorX, cursorY, {
         minX,
         minY,
         frameW,
         frameH,
+        config,
+        keyIndex: keys.indexOf(tile.key),
       });
       layout.push({
         row: rowIndex,
@@ -1500,9 +1505,9 @@ async function createHeatTransferSheet(keys: ParsedKey[], projectionCanvas: HTML
         },
       });
       cursorX += tileW + spacingPx;
-    });
+    }
     cursorY += rowSizes[rowIndex].height + spacingPx;
-  });
+  }
 
   return { canvas, png: await canvasToPngBytes(canvas), layout };
 }
@@ -1521,27 +1526,164 @@ function groupKeysForTransfer(keys: ParsedKey[]) {
   return rows;
 }
 
-function drawHeatTransferTile(
+async function drawHeatTransferTile(
   ctx: CanvasRenderingContext2D,
   projectionCanvas: HTMLCanvasElement | null,
   tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
   x: number,
   y: number,
-  frame: { minX: number; minY: number; frameW: number; frameH: number },
+  frame: { minX: number; minY: number; frameW: number; frameH: number; config: SceneConfig; keyIndex: number },
 ) {
-  if (!projectionCanvas) return;
-  const sourceX = ((tile.key.x - frame.minX) / frame.frameW) * projectionCanvas.width;
-  const sourceY = ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height;
-  const sourceW = (tile.key.w / frame.frameW) * projectionCanvas.width;
-  const sourceH = (tile.key.h / frame.frameH) * projectionCanvas.height;
-  const sideDepthX = Math.max(6, sourceW * HEAT_TRANSFER_SIDE_RATIO);
-  const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
+  drawHeatTransferKeyBase(ctx, tile, x, y, frame.config, frame.keyIndex);
+  if (projectionCanvas) {
+    const sourceX = ((tile.key.x - frame.minX) / frame.frameW) * projectionCanvas.width;
+    const sourceY = ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height;
+    const sourceW = (tile.key.w / frame.frameW) * projectionCanvas.width;
+    const sourceH = (tile.key.h / frame.frameH) * projectionCanvas.height;
+    const sideDepthX = Math.max(6, sourceW * HEAT_TRANSFER_SIDE_RATIO);
+    const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
 
-  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX, y + tile.sideY, tile.topW, tile.topH);
-  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY);
-  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX, tile.topH);
-  drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW, y + tile.sideY, tile.sideX, tile.topH);
-  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH, tile.topW, tile.sideY);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX, y + tile.sideY, tile.topW, tile.topH);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX, tile.topH);
+    drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW, y + tile.sideY, tile.sideX, tile.topH);
+    drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH, tile.topW, tile.sideY);
+  }
+  await drawHeatTransferLegends(ctx, tile, x, y, frame.config, frame.keyIndex);
+}
+
+function drawHeatTransferKeyBase(
+  ctx: CanvasRenderingContext2D,
+  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  x: number,
+  y: number,
+  config: SceneConfig,
+  keyIndex: number,
+) {
+  const override = config.keyOverrides[keyIndex] ?? {};
+  const color = override.color ?? tile.key.color ?? config.keycapColor;
+  ctx.fillStyle = shadeColor(color, -12);
+  ctx.fillRect(x + tile.sideX, y, tile.topW, tile.sideY);
+  ctx.fillRect(x, y + tile.sideY, tile.sideX, tile.topH);
+  ctx.fillRect(x + tile.sideX + tile.topW, y + tile.sideY, tile.sideX, tile.topH);
+  ctx.fillRect(x + tile.sideX, y + tile.sideY + tile.topH, tile.topW, tile.sideY);
+  ctx.fillStyle = color;
+  ctx.fillRect(x + tile.sideX, y + tile.sideY, tile.topW, tile.topH);
+}
+
+async function drawHeatTransferLegends(
+  ctx: CanvasRenderingContext2D,
+  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  x: number,
+  y: number,
+  config: SceneConfig,
+  keyIndex: number,
+) {
+  const override = config.keyOverrides[keyIndex] ?? {};
+  const labels = override.labels?.length ? override.labels : tile.key.labels;
+  const entries = labels
+    .map((label, index) => ({
+      index,
+      label: normalizeExportLegend(label ?? ""),
+      color: override.legendColor ?? config.legendColor ?? tile.key.textColors[index] ?? tile.key.textColor,
+      size: tile.key.textSizes[index] ?? tile.key.textSize ?? 3,
+    }))
+    .filter((entry) => entry.label);
+  const fontScale = Math.min(tile.topW, tile.topH) / 512;
+  const legendScale = override.legendScale ?? config.legendScale;
+  const legendFont = override.legendFont ?? config.legendFont;
+
+  drawLegendEntries(ctx, entries.filter((entry) => entry.index < 9), {
+    x: x + tile.sideX,
+    y: y + tile.sideY,
+    width: tile.topW,
+    height: tile.topH,
+    fontScale,
+    legendScale,
+    legendFont,
+  });
+  drawLegendEntries(ctx, entries.filter((entry) => entry.index >= 9), {
+    x: x + tile.sideX,
+    y: y + tile.sideY + tile.topH,
+    width: tile.topW,
+    height: tile.sideY,
+    fontScale: Math.min(tile.topW, tile.sideY) / 512,
+    legendScale,
+    legendFont,
+  });
+
+  const iconUrl = override.iconImageUrl;
+  if (!iconUrl) return;
+  const icon = await loadExportImage(iconUrl);
+  if (!icon) return;
+  const [iconX, iconY] = EXPORT_LEGEND_POSITIONS[Math.max(0, Math.min(8, override.iconPosition ?? 4))] ?? EXPORT_LEGEND_POSITIONS[4];
+  const iconSize = tile.topW * 0.42 * Math.max(0.2, Math.min(2.4, override.iconScale ?? 1));
+  ctx.drawImage(icon, x + tile.sideX + iconX * tile.topW - iconSize / 2, y + tile.sideY + iconY * tile.topH - iconSize / 2, iconSize, iconSize);
+}
+
+const EXPORT_LEGEND_POSITIONS: Array<[number, number]> = [
+  [0.18, 0.18],
+  [0.5, 0.18],
+  [0.82, 0.18],
+  [0.18, 0.5],
+  [0.5, 0.5],
+  [0.82, 0.5],
+  [0.18, 0.82],
+  [0.5, 0.82],
+  [0.82, 0.82],
+  [0.18, 0.5],
+  [0.5, 0.5],
+  [0.82, 0.5],
+];
+
+function drawLegendEntries(
+  ctx: CanvasRenderingContext2D,
+  entries: Array<{ index: number; label: string; color: string; size: number }>,
+  area: { x: number; y: number; width: number; height: number; fontScale: number; legendScale: number; legendFont: string },
+) {
+  ctx.save();
+  ctx.textBaseline = "middle";
+  entries.forEach((entry) => {
+    const [positionX, positionY] = EXPORT_LEGEND_POSITIONS[entry.index] ?? EXPORT_LEGEND_POSITIONS[4];
+    const fontSize = Math.max(7, Math.min(area.height * 0.68, (6 + entry.size * 2) * 1.95 * area.legendScale * area.fontScale));
+    ctx.fillStyle = entry.color;
+    ctx.font = `600 ${fontSize}px ${area.legendFont}, "Segoe UI Symbol", "Arial Unicode MS", sans-serif`;
+    ctx.textAlign = positionX < 0.34 ? "left" : positionX > 0.66 ? "right" : "center";
+    const lines = entry.label.split("\n").filter(Boolean).slice(0, 2);
+    const lineHeight = fontSize * 1.08;
+    lines.forEach((line, lineIndex) => {
+      const offset = (lineIndex - (lines.length - 1) / 2) * lineHeight;
+      ctx.fillText(line, area.x + positionX * area.width, area.y + positionY * area.height + offset);
+    });
+  });
+  ctx.restore();
+}
+
+function normalizeExportLegend(raw: string) {
+  const withoutTags = raw.replace(/<i[^>]*class=["'][^"']*(fa-[a-z0-9-]+)[^"']*["'][^>]*><\/i>/gi, (_match, icon: string) => icon.replace(/^fa-/, ""));
+  const text = withoutTags.replace(/<[^>]+>/g, "").trim();
+  if (!text) return "";
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = text;
+  return textarea.value;
+}
+
+async function loadExportImage(url: string) {
+  const image = new Image();
+  image.src = url;
+  try {
+    await image.decode();
+    return image;
+  } catch {
+    return null;
+  }
+}
+
+function shadeColor(color: string, amount: number) {
+  const hex = color.replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return color;
+  const channel = (start: number) => Math.max(0, Math.min(255, parseInt(hex.slice(start, start + 2), 16) + amount));
+  return `#${[channel(0), channel(2), channel(4)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function drawClippedImage(
