@@ -1,0 +1,128 @@
+{
+  "brand": {
+    "title": "Keyforge Studio",
+    "subtitle": "Commercial 3D keyboard customization pipeline"
+  },
+  "keyboardModels": [
+    {
+      "id": "atelier-60",
+      "name": "Atelier 60",
+      "layoutPath": "/layouts/60_ansi_layout.json",
+      "defaultConfig": {
+        "keycapType": "cherry",
+        "caseMaterial": "aluminum",
+        "caseColor": "#6f7780",
+        "keycapMaterial": "pbt",
+        "keycapColor": "#ececec"
+      },
+      "description": "60% aluminum daily board with Cherry profile caps."
+    },
+    {
+      "id": "studio-iso",
+      "name": "Studio ISO",
+      "layoutPath": "/layouts/iso-60-layout.json",
+      "defaultConfig": {
+        "keycapType": "oem",
+        "caseMaterial": "polycarbonate",
+        "caseColor": "#28313b",
+        "keycapMaterial": "abs",
+        "keycapColor": "#ececec"
+      },
+      "description": "ISO layout with a translucent case and taller sculpt."
+    },
+    {
+      "id": "canvas-xda",
+      "name": "Canvas XDA",
+      "layoutPath": "/layouts/60_ansi_layout.json",
+      "defaultConfig": {
+        "keycapType": "xda",
+        "caseMaterial": "acrylic",
+        "caseColor": "#d8d1c5",
+        "keycapMaterial": "resin",
+        "keycapColor": "#ececec"
+      },
+      "description": "Flat XDA profile for artwork-heavy projected designs."
+    }
+  ],
+  "layouts": [
+    { "label": "60 ANSI", "value": "/layouts/60_ansi_layout.json" },
+    { "label": "60 ISO", "value": "/layouts/iso-60-layout.json" },
+    { "label": "ISO Compact", "value": "/layouts/iso-60-layout.json" }
+  ],
+  "caseMaterials": [
+    { "label": "Aluminum", "value": "aluminum" },
+    { "label": "Polycarbonate", "value": "polycarbonate" },
+    { "label": "Wood", "value": "wood" },
+    { "label": "Acrylic", "value": "acrylic" }
+  ],
+  "keycapTypes": [
+    { "label": "Cherry", "value": "cherry" },
+    { "label": "OEM", "value": "oem" },
+    { "label": "XDA", "value": "xda" },
+    { "label": "DSA", "value": "dsa" }
+  ],
+  "keycapMaterials": [
+    { "label": "PBT", "value": "pbt" },
+    { "label": "ABS", "value": "abs" },
+    { "label": "Resin", "value": "resin" },
+    { "label": "Metal", "value": "metal" }
+  ],
+  "keycapColors": [
+    { "label": "Warm white", "value": "#ececec" },
+    { "label": "Charcoal", "value": "#2f3438" },
+    { "label": "Red clay", "value": "#d9614c" },
+    { "label": "Amber", "value": "#e3b34f" },
+    { "label": "Mint", "value": "#62c7b2" },
+    { "label": "Sky blue", "value": "#8fc6ff" }
+  ],
+  "legendFonts": [
+    { "label": "Segoe UI", "value": "\"Segoe UI\"" },
+    { "label": "Arial", "value": "Arial" },
+    { "label": "Arial Narrow", "value": "\"Arial Narrow\"" },
+    { "label": "Verdana", "value": "Verdana" },
+    { "label": "Tahoma", "value": "Tahoma" },
+    { "label": "Consolas", "value": "Consolas" },
+    { "label": "Times New Roman", "value": "\"Times New Roman\"" },
+    { "label": "Microsoft YaHei", "value": "\"Microsoft YaHei\"" },
+    { "label": "SimHei", "value": "SimHei" }
+  ],
+  "iconPresets": [
+    { "label": "None", "value": "" },
+    { "label": "Arrow", "value": "/icons/arrow-up.png" },
+    { "label": "Gear", "value": "/icons/gear.png" },
+    { "label": "Check", "value": "/icons/check.png" }
+  ],
+  "iconPositions": [
+    { "label": "Top left", "value": 0 },
+    { "label": "Top", "value": 1 },
+    { "label": "Top right", "value": 2 },
+    { "label": "Left", "value": 3 },
+    { "label": "Center", "value": 4 },
+    { "label": "Right", "value": 5 },
+    { "label": "Bottom left", "value": 6 },
+    { "label": "Bottom", "value": 7 },
+    { "label": "Bottom right", "value": 8 }
+  ],
+  "defaults": {
+    "profileId": "cherry",
+    "rowId": "R3",
+    "unitWidth": 1,
+    "unitHeight": 1,
+    "dishDepth": 0.65,
+    "projectionOpacity": 0.86,
+    "legendScale": 4,
+    "legendFont": "\"Segoe UI\"",
+    "legendColor": "#111111",
+    "sideSpread": 0.92,
+    "sideEase": 1.12,
+    "showWire": false,
+    "showGhost": false,
+    "showProjection": false,
+    "selectedKeyIndex": 0,
+    "selectedKeyIndices": [0],
+    "keycapMaterial": "pbt",
+    "keycapColor": "#ececec",
+    "caseConfig": { "color": "#6f7780", "material": "aluminum" },
+    "spotLightDistance": 200
+  }
+}
