@@ -534,6 +534,7 @@ export default function App() {
       layoutPath,
       config,
       layers: projectionLayers,
+      projectionCanvas: projectionCanvasRef.current,
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1347,6 +1348,7 @@ type ExportProjectInput = {
   layoutPath: string;
   config: SceneConfig;
   layers: ProjectionLayer[];
+  projectionCanvas: HTMLCanvasElement | null;
 };
 
 async function exportProjectZip(input: ExportProjectInput) {
@@ -1358,6 +1360,7 @@ async function exportProjectZip(input: ExportProjectInput) {
       return { layer, image, path };
     }),
   );
+  const transferSheet = await createHeatTransferSheet(input.config.layoutKeys, input.projectionCanvas);
 
   const project = {
     schemaVersion: 1,
@@ -1367,6 +1370,18 @@ async function exportProjectZip(input: ExportProjectInput) {
     presetId: input.presetId,
     layoutPath: input.layoutPath,
     config: exportableConfig(input.config),
+    heatTransferSheet: {
+      file: "production/heat-transfer-sheet.png",
+      dpi: HEAT_TRANSFER_DPI,
+      pxPerMm: HEAT_TRANSFER_PX_PER_MM,
+      keySpacingMm: HEAT_TRANSFER_KEY_SPACING_MM,
+      sizePx: { width: transferSheet.canvas.width, height: transferSheet.canvas.height },
+      sizeMm: {
+        width: transferSheet.canvas.width / HEAT_TRANSFER_PX_PER_MM,
+        height: transferSheet.canvas.height / HEAT_TRANSFER_PX_PER_MM,
+      },
+      layout: transferSheet.layout,
+    },
     projectionLayers: imageFiles.map(({ layer, image, path }) => ({
       id: layer.id,
       name: layer.name,
@@ -1387,6 +1402,7 @@ async function exportProjectZip(input: ExportProjectInput) {
   const encoder = new TextEncoder();
   return createZip([
     { path: "project.json", data: encoder.encode(JSON.stringify(project, null, 2)) },
+    { path: "production/heat-transfer-sheet.png", data: transferSheet.png },
     ...imageFiles.map(({ image, path }) => ({ path, data: image.data })),
   ]);
 }
@@ -1397,6 +1413,169 @@ function exportableConfig(config: SceneConfig) {
   void projectionCanvas;
   void projectionVersion;
   return rest;
+}
+
+const KEY_UNIT_MM = 19.05;
+const HEAT_TRANSFER_DPI = 300;
+const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
+const HEAT_TRANSFER_KEY_SPACING_MM = 5;
+const HEAT_TRANSFER_SIDE_RATIO = 0.34;
+
+async function createHeatTransferSheet(keys: ParsedKey[], projectionCanvas: HTMLCanvasElement | null) {
+  if (!keys.length) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    return { canvas, png: await canvasToPngBytes(canvas), layout: [] };
+  }
+
+  const minX = Math.min(...keys.map((key) => key.x));
+  const minY = Math.min(...keys.map((key) => key.y));
+  const maxX = Math.max(...keys.map((key) => key.x + key.w));
+  const maxY = Math.max(...keys.map((key) => key.y + key.h));
+  const frameW = Math.max(1, maxX - minX);
+  const frameH = Math.max(1, maxY - minY);
+  const spacingPx = Math.round(HEAT_TRANSFER_KEY_SPACING_MM * HEAT_TRANSFER_PX_PER_MM);
+  const paddingPx = spacingPx;
+
+  const rows = groupKeysForTransfer(keys);
+  const tiles = rows.map((row) =>
+    row.map((key) => {
+      const topW = key.w * KEY_UNIT_MM * HEAT_TRANSFER_PX_PER_MM;
+      const topH = key.h * KEY_UNIT_MM * HEAT_TRANSFER_PX_PER_MM;
+      const sideX = Math.max(2 * HEAT_TRANSFER_PX_PER_MM, topW * HEAT_TRANSFER_SIDE_RATIO);
+      const sideY = Math.max(2 * HEAT_TRANSFER_PX_PER_MM, topH * HEAT_TRANSFER_SIDE_RATIO);
+      return {
+        key,
+        topW: Math.round(topW),
+        topH: Math.round(topH),
+        sideX: Math.round(sideX),
+        sideY: Math.round(sideY),
+      };
+    }),
+  );
+
+  const rowSizes = tiles.map((row) => ({
+    width: row.reduce((sum, tile, index) => sum + tile.sideX * 2 + tile.topW + (index ? spacingPx : 0), 0),
+    height: Math.max(...row.map((tile) => tile.sideY * 2 + tile.topH)),
+  }));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, paddingPx * 2 + Math.max(...rowSizes.map((row) => row.width)));
+  canvas.height = Math.max(1, paddingPx * 2 + rowSizes.reduce((sum, row, index) => sum + row.height + (index ? spacingPx : 0), 0));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { canvas, png: await canvasToPngBytes(canvas), layout: [] };
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const layout: Array<Record<string, unknown>> = [];
+  let cursorY = paddingPx;
+  tiles.forEach((row, rowIndex) => {
+    let cursorX = paddingPx;
+    row.forEach((tile, columnIndex) => {
+      const tileW = tile.sideX * 2 + tile.topW;
+      const tileH = tile.sideY * 2 + tile.topH;
+      drawHeatTransferTile(ctx, projectionCanvas, tile, cursorX, cursorY, {
+        minX,
+        minY,
+        frameW,
+        frameH,
+      });
+      layout.push({
+        row: rowIndex,
+        column: columnIndex,
+        label: tile.key.label,
+        source: { x: tile.key.x, y: tile.key.y, w: tile.key.w, h: tile.key.h },
+        sheetPx: { x: cursorX, y: cursorY, width: tileW, height: tileH },
+        sheetMm: {
+          x: cursorX / HEAT_TRANSFER_PX_PER_MM,
+          y: cursorY / HEAT_TRANSFER_PX_PER_MM,
+          width: tileW / HEAT_TRANSFER_PX_PER_MM,
+          height: tileH / HEAT_TRANSFER_PX_PER_MM,
+        },
+        faces: {
+          back: { x: tile.sideX, y: 0, width: tile.topW, height: tile.sideY },
+          left: { x: 0, y: tile.sideY, width: tile.sideX, height: tile.topH },
+          top: { x: tile.sideX, y: tile.sideY, width: tile.topW, height: tile.topH },
+          right: { x: tile.sideX + tile.topW, y: tile.sideY, width: tile.sideX, height: tile.topH },
+          front: { x: tile.sideX, y: tile.sideY + tile.topH, width: tile.topW, height: tile.sideY },
+        },
+      });
+      cursorX += tileW + spacingPx;
+    });
+    cursorY += rowSizes[rowIndex].height + spacingPx;
+  });
+
+  return { canvas, png: await canvasToPngBytes(canvas), layout };
+}
+
+function groupKeysForTransfer(keys: ParsedKey[]) {
+  const rows: ParsedKey[][] = [];
+  keys
+    .slice()
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .forEach((key) => {
+      const row = rows.find((items) => Math.abs(items[0].y - key.y) < 0.01);
+      if (row) row.push(key);
+      else rows.push([key]);
+    });
+  rows.forEach((row) => row.sort((a, b) => a.x - b.x));
+  return rows;
+}
+
+function drawHeatTransferTile(
+  ctx: CanvasRenderingContext2D,
+  projectionCanvas: HTMLCanvasElement | null,
+  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
+  x: number,
+  y: number,
+  frame: { minX: number; minY: number; frameW: number; frameH: number },
+) {
+  if (!projectionCanvas) return;
+  const sourceX = ((tile.key.x - frame.minX) / frame.frameW) * projectionCanvas.width;
+  const sourceY = ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height;
+  const sourceW = (tile.key.w / frame.frameW) * projectionCanvas.width;
+  const sourceH = (tile.key.h / frame.frameH) * projectionCanvas.height;
+  const sideDepthX = Math.max(6, sourceW * HEAT_TRANSFER_SIDE_RATIO);
+  const sideDepthY = Math.max(6, sourceH * HEAT_TRANSFER_SIDE_RATIO);
+
+  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sourceH, x + tile.sideX, y + tile.sideY, tile.topW, tile.topH);
+  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sourceW, sideDepthY, x + tile.sideX, y, tile.topW, tile.sideY);
+  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY, sideDepthX, sourceH, x, y + tile.sideY, tile.sideX, tile.topH);
+  drawClippedImage(ctx, projectionCanvas, sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sourceH, x + tile.sideX + tile.topW, y + tile.sideY, tile.sideX, tile.topH);
+  drawClippedImage(ctx, projectionCanvas, sourceX, sourceY + sourceH - sideDepthY, sourceW, sideDepthY, x + tile.sideX, y + tile.sideY + tile.topH, tile.topW, tile.sideY);
+}
+
+function drawClippedImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLCanvasElement,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+) {
+  const sourceWidth = image.width;
+  const sourceHeight = image.height;
+  const clippedX = Math.max(0, sx);
+  const clippedY = Math.max(0, sy);
+  const clippedRight = Math.min(sourceWidth, sx + sw);
+  const clippedBottom = Math.min(sourceHeight, sy + sh);
+  const clippedW = clippedRight - clippedX;
+  const clippedH = clippedBottom - clippedY;
+  if (clippedW <= 0 || clippedH <= 0) return;
+
+  const offsetX = ((clippedX - sx) / sw) * dw;
+  const offsetY = ((clippedY - sy) / sh) * dh;
+  const destW = (clippedW / sw) * dw;
+  const destH = (clippedH / sh) * dh;
+  ctx.drawImage(image, clippedX, clippedY, clippedW, clippedH, dx + offsetX, dy + offsetY, destW, destH);
+}
+
+async function canvasToPngBytes(canvas: HTMLCanvasElement) {
+  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob ?? new Blob()), "image/png"));
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 async function layerImageBytes(layer: ProjectionLayer): Promise<{ data: Uint8Array; mime: string }> {
