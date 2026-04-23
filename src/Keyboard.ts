@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { buildSingleKeycap, type BuiltKeycap, type KeyFootprint, type SceneConfig } from "./keycap";
 
 const U = 19.05;
-const PROJECTION_TEXTURE_SIZE = 512;
+const PROJECTION_TEXTURE_SIZE = 510;
+const PROJECTION_TEXTURE_BLEED = 2;
 
 export class Keyboard {
   static build(config: SceneConfig, skinTexture: THREE.Texture): BuiltKeycap {
@@ -58,7 +59,8 @@ export class Keyboard {
       if (!first) first = built;
       built.group.position.set((key.x + center.x - centerX) * U, -(key.y + center.y - centerY) * U, 0);
       built.group.rotation.z = THREE.MathUtils.degToRad(-(key.r ?? 0));
-      if ((config.selectedKeyIndices?.length ? config.selectedKeyIndices : [config.selectedKeyIndex]).includes(index)) {
+      const selectedIndices = config.selectedKeyIndices?.length ? config.selectedKeyIndices : config.selectedKeyIndex >= 0 ? [config.selectedKeyIndex] : [];
+      if (selectedIndices.includes(index)) {
         built.group.add(Keyboard.createSelectionHighlight(built));
       }
       layoutGroup.add(built.group);
@@ -126,21 +128,38 @@ export class Keyboard {
     const sideDepthY = Math.min(sourceH * 0.28, Math.max(4, sourceH * 0.18));
 
     const drawSlice = (sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw = cell, dh = cell) => {
-      const clippedX = Math.max(0, sx);
-      const clippedY = Math.max(0, sy);
-      const clippedRight = Math.min(projectionCanvas.width, sx + sw);
-      const clippedBottom = Math.min(projectionCanvas.height, sy + sh);
+      const bleedX = Math.min(PROJECTION_TEXTURE_BLEED, dw / 3);
+      const bleedY = Math.min(PROJECTION_TEXTURE_BLEED, dh / 3);
+      const sourceBleedX = (sw / dw) * bleedX;
+      const sourceBleedY = (sh / dh) * bleedY;
+      const expandedSx = sx - sourceBleedX;
+      const expandedSy = sy - sourceBleedY;
+      const expandedSw = sw + sourceBleedX * 2;
+      const expandedSh = sh + sourceBleedY * 2;
+      const expandedDx = dx - bleedX;
+      const expandedDy = dy - bleedY;
+      const expandedDw = dw + bleedX * 2;
+      const expandedDh = dh + bleedY * 2;
+
+      const clippedX = Math.max(0, expandedSx);
+      const clippedY = Math.max(0, expandedSy);
+      const clippedRight = Math.min(projectionCanvas.width, expandedSx + expandedSw);
+      const clippedBottom = Math.min(projectionCanvas.height, expandedSy + expandedSh);
       const clippedW = clippedRight - clippedX;
       const clippedH = clippedBottom - clippedY;
       if (clippedW <= 0 || clippedH <= 0) return;
 
-      const offsetX = ((clippedX - sx) / sw) * dw;
-      const offsetY = ((clippedY - sy) / sh) * dh;
-      const destW = (clippedW / sw) * dw;
-      const destH = (clippedH / sh) * dh;
-      ctx.drawImage(projectionCanvas, clippedX, clippedY, clippedW, clippedH, dx + offsetX, dy + offsetY, destW, destH);
+      const offsetX = ((clippedX - expandedSx) / expandedSw) * expandedDw;
+      const offsetY = ((clippedY - expandedSy) / expandedSh) * expandedDh;
+      const destW = (clippedW / expandedSw) * expandedDw;
+      const destH = (clippedH / expandedSh) * expandedDh;
+      ctx.drawImage(projectionCanvas, clippedX, clippedY, clippedW, clippedH, expandedDx + offsetX, expandedDy + offsetY, destW, destH);
     };
 
+    drawSlice(sourceX, sourceY, sideDepthX, sideDepthY, 0, 0);
+    drawSlice(sourceX + sourceW - sideDepthX, sourceY, sideDepthX, sideDepthY, cell * 2, 0);
+    drawSlice(sourceX, sourceY + sourceH - sideDepthY, sideDepthX, sideDepthY, 0, cell * 2);
+    drawSlice(sourceX + sourceW - sideDepthX, sourceY + sourceH - sideDepthY, sideDepthX, sideDepthY, cell * 2, cell * 2);
     drawSlice(sourceX + sideDepthX, sourceY + sideDepthY, sourceW - sideDepthX * 2, sourceH - sideDepthY * 2, cell, cell);
     drawSlice(sourceX + sideDepthX, sourceY, sourceW - sideDepthX * 2, sideDepthY, cell, 0);
     drawSlice(sourceX, sourceY + sideDepthY, sideDepthX, sourceH - sideDepthY * 2, 0, cell);

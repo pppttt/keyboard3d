@@ -1,6 +1,6 @@
 {
   "brand": {
-    "title": "Keyforge Studio",
+    "title": "Keyforge Studio V1",
     "subtitle": "Commercial 3D keyboard customization pipeline"
   },
   "keyboardModels": [
@@ -45,63 +45,208 @@
     }
   ],
   "layouts": [
-    { "label": "60 ANSI", "value": "/layouts/60_ansi_layout.json" },
-    { "label": "60 ISO", "value": "/layouts/iso-60-layout.json" },
-    { "label": "ISO Compact", "value": "/layouts/iso-60-layout.json" }
+    {
+      "label": "60 ANSI",
+      "value": "/layouts/60_ansi_layout.json"
+    },
+    {
+      "label": "60 ISO",
+      "value": "/layouts/iso-60-layout.json"
+    },
+    {
+      "label": "ISO Compact",
+      "value": "/layouts/iso-60-layout.json"
+    }
+  ],
+  "themes": [
+    {
+      "id": "ansi-night-market",
+      "name": "Night Market",
+      "layoutPath": "/layouts/60_ansi_layout.json",
+      "path": "/themes/ansi-night-market/theme.json",
+      "description": "Dark green ANSI set with warm legends."
+    },
+    {
+      "id": "iso-signal",
+      "name": "Signal ISO",
+      "layoutPath": "/layouts/iso-60-layout.json",
+      "path": "/themes/iso-signal/theme.json",
+      "description": "ISO-only contrast theme with highlighted Enter."
+    }
   ],
   "caseMaterials": [
-    { "label": "Aluminum", "value": "aluminum" },
-    { "label": "Polycarbonate", "value": "polycarbonate" },
-    { "label": "Wood", "value": "wood" },
-    { "label": "Acrylic", "value": "acrylic" }
+    {
+      "label": "Aluminum",
+      "value": "aluminum"
+    },
+    {
+      "label": "Polycarbonate",
+      "value": "polycarbonate"
+    },
+    {
+      "label": "Wood",
+      "value": "wood"
+    },
+    {
+      "label": "Acrylic",
+      "value": "acrylic"
+    }
   ],
   "keycapTypes": [
-    { "label": "Cherry", "value": "cherry" },
-    { "label": "OEM", "value": "oem" },
-    { "label": "XDA", "value": "xda" },
-    { "label": "DSA", "value": "dsa" }
+    {
+      "label": "Cherry",
+      "value": "cherry"
+    },
+    {
+      "label": "OEM",
+      "value": "oem"
+    },
+    {
+      "label": "XDA",
+      "value": "xda"
+    },
+    {
+      "label": "DSA",
+      "value": "dsa"
+    }
   ],
   "keycapMaterials": [
-    { "label": "PBT", "value": "pbt" },
-    { "label": "ABS", "value": "abs" },
-    { "label": "Resin", "value": "resin" },
-    { "label": "Metal", "value": "metal" }
+    {
+      "label": "PBT",
+      "value": "pbt"
+    },
+    {
+      "label": "ABS",
+      "value": "abs"
+    },
+    {
+      "label": "Resin",
+      "value": "resin"
+    },
+    {
+      "label": "Metal",
+      "value": "metal"
+    }
   ],
   "keycapColors": [
-    { "label": "Warm white", "value": "#ececec" },
-    { "label": "Charcoal", "value": "#2f3438" },
-    { "label": "Red clay", "value": "#d9614c" },
-    { "label": "Amber", "value": "#e3b34f" },
-    { "label": "Mint", "value": "#62c7b2" },
-    { "label": "Sky blue", "value": "#8fc6ff" }
+    {
+      "label": "Warm white",
+      "value": "#ececec"
+    },
+    {
+      "label": "Charcoal",
+      "value": "#2f3438"
+    },
+    {
+      "label": "Red clay",
+      "value": "#d9614c"
+    },
+    {
+      "label": "Amber",
+      "value": "#e3b34f"
+    },
+    {
+      "label": "Mint",
+      "value": "#62c7b2"
+    },
+    {
+      "label": "Sky blue",
+      "value": "#8fc6ff"
+    }
   ],
   "legendFonts": [
-    { "label": "Segoe UI", "value": "\"Segoe UI\"" },
-    { "label": "Arial", "value": "Arial" },
-    { "label": "Arial Narrow", "value": "\"Arial Narrow\"" },
-    { "label": "Verdana", "value": "Verdana" },
-    { "label": "Tahoma", "value": "Tahoma" },
-    { "label": "Consolas", "value": "Consolas" },
-    { "label": "Times New Roman", "value": "\"Times New Roman\"" },
-    { "label": "Microsoft YaHei", "value": "\"Microsoft YaHei\"" },
-    { "label": "SimHei", "value": "SimHei" }
+    {
+      "label": "Segoe UI",
+      "value": "\"Segoe UI\""
+    },
+    {
+      "label": "Arial",
+      "value": "Arial"
+    },
+    {
+      "label": "Arial Narrow",
+      "value": "\"Arial Narrow\""
+    },
+    {
+      "label": "Verdana",
+      "value": "Verdana"
+    },
+    {
+      "label": "Tahoma",
+      "value": "Tahoma"
+    },
+    {
+      "label": "Consolas",
+      "value": "Consolas"
+    },
+    {
+      "label": "Times New Roman",
+      "value": "\"Times New Roman\""
+    },
+    {
+      "label": "Microsoft YaHei",
+      "value": "\"Microsoft YaHei\""
+    },
+    {
+      "label": "SimHei",
+      "value": "SimHei"
+    }
   ],
   "iconPresets": [
-    { "label": "None", "value": "" },
-    { "label": "Arrow", "value": "/icons/arrow-up.png" },
-    { "label": "Gear", "value": "/icons/gear.png" },
-    { "label": "Check", "value": "/icons/check.png" }
+    {
+      "label": "None",
+      "value": ""
+    },
+    {
+      "label": "Arrow",
+      "value": "/icons/arrow-up.png"
+    },
+    {
+      "label": "Gear",
+      "value": "/icons/gear.png"
+    },
+    {
+      "label": "Check",
+      "value": "/icons/check.png"
+    }
   ],
   "iconPositions": [
-    { "label": "Top left", "value": 0 },
-    { "label": "Top", "value": 1 },
-    { "label": "Top right", "value": 2 },
-    { "label": "Left", "value": 3 },
-    { "label": "Center", "value": 4 },
-    { "label": "Right", "value": 5 },
-    { "label": "Bottom left", "value": 6 },
-    { "label": "Bottom", "value": 7 },
-    { "label": "Bottom right", "value": 8 }
+    {
+      "label": "Top left",
+      "value": 0
+    },
+    {
+      "label": "Top",
+      "value": 1
+    },
+    {
+      "label": "Top right",
+      "value": 2
+    },
+    {
+      "label": "Left",
+      "value": 3
+    },
+    {
+      "label": "Center",
+      "value": 4
+    },
+    {
+      "label": "Right",
+      "value": 5
+    },
+    {
+      "label": "Bottom left",
+      "value": 6
+    },
+    {
+      "label": "Bottom",
+      "value": 7
+    },
+    {
+      "label": "Bottom right",
+      "value": 8
+    }
   ],
   "defaults": {
     "profileId": "cherry",
@@ -113,16 +258,23 @@
     "legendScale": 4,
     "legendFont": "\"Segoe UI\"",
     "legendColor": "#111111",
+    "frontLegendHeight": 0.76,
     "sideSpread": 0.92,
     "sideEase": 1.12,
     "showWire": false,
     "showGhost": false,
     "showProjection": false,
+    "showCase": true,
     "selectedKeyIndex": 0,
-    "selectedKeyIndices": [0],
+    "selectedKeyIndices": [
+      0
+    ],
     "keycapMaterial": "pbt",
     "keycapColor": "#ececec",
-    "caseConfig": { "color": "#6f7780", "material": "aluminum" },
+    "caseConfig": {
+      "color": "#6f7780",
+      "material": "aluminum"
+    },
     "spotLightDistance": 200
   }
 }

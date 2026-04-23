@@ -23,6 +23,7 @@ export type KeyOverride = {
 export type KeyboardCaseConfig = {
   color: string;
   material: CaseMaterial;
+  modelPath?: string;
 };
 
 export type RowConfig = { totalDepth: number; topTilt: number; topSkew?: number };
@@ -53,11 +54,13 @@ export type SceneConfig = {
   legendScale: number;
   legendFont: string;
   legendColor: string;
+  frontLegendHeight: number;
   sideSpread: number;
   sideEase: number;
   showWire: boolean;
   showGhost: boolean;
   showProjection: boolean;
+  showCase: boolean;
   skinImage: HTMLImageElement | null;
   projectionCanvas: HTMLCanvasElement | null;
   projectionVersion: number;
@@ -488,6 +491,7 @@ export function buildSingleKeycap(config: SceneConfig, skinTexture: THREE.Textur
     options.legendScale ?? config.legendScale,
     options.legendFont ?? config.legendFont,
     options.legendColor ?? config.legendColor,
+    config.frontLegendHeight,
   );
   if (legends) {
     group.add(legends);

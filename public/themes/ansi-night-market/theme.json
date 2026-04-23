@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "keyboard3d-theme",
+  "name": "Night Market",
+  "source": {
+    "app": "keyboard3d",
+    "layoutPath": "/layouts/60_ansi_layout.json"
+  },
+  "defaults": {
+    "keycap": {
+      "color": "#18352f",
+      "material": "pbt"
+    },
+    "legend": {
+      "font": "\"Segoe UI\"",
+      "color": "#ffd27a",
+      "scale": 5.4
+    },
+    "case": {
+      "color": "#20262a",
+      "material": "aluminum"
+    }
+  },
+  "keys": [
+    {
+      "index": 0,
+      "keycap": { "color": "#6f3f48" },
+      "legend": { "color": "#fff2bd" }
+    },
+    {
+      "index": 14,
+      "keycap": { "color": "#d9614c" },
+      "legend": { "color": "#111111" }
+    },
+    {
+      "index": 15,
+      "keycap": { "color": "#28584c" }
+    },
+    {
+      "index": 28,
+      "keycap": { "color": "#e3b34f" },
+      "legend": { "color": "#111111" }
+    },
+    {
+      "index": 42,
+      "keycap": { "color": "#6f3f48" },
+      "legend": { "color": "#fff2bd" }
+    },
+    {
+      "index": 57,
+      "keycap": { "color": "#101416" },
+      "legend": { "labels": ["Night Market"], "color": "#ffd27a", "scale": 4.8 }
+    }
+  ]
+}

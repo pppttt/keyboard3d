@@ -161,7 +161,7 @@ canvas {
   pointer-events: none;
 }
 
-.toolbar div {
+.toolbar > div:first-child {
   padding: 10px 12px;
   background: rgba(16, 18, 20, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -184,16 +184,52 @@ canvas {
   font-size: 12px;
 }
 
-#resetView {
-  width: 40px;
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.toolbar-button {
+  min-width: 40px;
   min-height: 40px;
+  padding: 0 12px;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 20px;
+  font-size: 13px;
   cursor: pointer;
-  pointer-events: auto;
+}
+
+.toolbar-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.render-button {
+  min-width: 68px;
+  color: #15120a;
+  background: var(--accent);
+}
+
+#resetView {
+  width: 40px;
+  padding: 0;
+  font-size: 20px;
+}
+
+.render-error {
+  position: absolute;
+  z-index: 3;
+  top: 68px;
+  right: 16px;
+  max-width: 320px;
+  padding: 8px 10px;
+  color: var(--danger);
+  background: rgba(16, 18, 20, 0.86);
+  border: 1px solid rgba(239, 131, 84, 0.45);
+  border-radius: 6px;
 }
 
 .control-group,
@@ -223,6 +259,15 @@ input[type="file"] {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+
+option.filled-option {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.legend-filled-hint {
+  color: var(--accent);
 }
 
 input[type="color"] {

@@ -7,6 +7,7 @@ import {
   type KeycapMaterial,
   type SceneConfig,
 } from "./keycap";
+import { FileExporter, type ProjectionLayer } from "./FileExporter";
 import { parseKLE, type ParsedKey } from "./utils/KLEParser";
 import { KeycapScene } from "./ViewScene";
 
@@ -18,6 +19,7 @@ type KeyboardPreset = {
     keycapType: string;
     caseColor: string;
     caseMaterial: CaseMaterial;
+    caseModelPath?: string;
     keycapMaterial: KeycapMaterial;
     keycapColor?: string;
   };
@@ -33,6 +35,14 @@ type SelectOption = {
   value: string;
 };
 
+type ThemeOption = {
+  id: string;
+  name: string;
+  layoutPath: string;
+  path: string;
+  description?: string;
+};
+
 type NumberOption = {
   label: string;
   value: number;
@@ -45,6 +55,7 @@ type PanelConfig = {
   };
   keyboardModels: KeyboardPreset[];
   layouts: SelectOption[];
+  themes?: ThemeOption[];
   caseMaterials: Array<SelectOption & { value: CaseMaterial }>;
   keycapTypes: SelectOption[];
   keycapMaterials: Array<SelectOption & { value: KeycapMaterial }>;
@@ -53,20 +64,6 @@ type PanelConfig = {
   iconPresets: SelectOption[];
   iconPositions?: NumberOption[];
   defaults: Omit<SceneConfig, "skinImage" | "projectionCanvas" | "projectionVersion" | "layoutKeys" | "keyOverrides">;
-};
-
-type ProjectionLayer = {
-  id: string;
-  name: string;
-  image: HTMLImageElement;
-  sourceDataUrl?: string;
-  sourceMime?: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation: number;
-  opacity: number;
 };
 
 type ResizeHandle = "nw" | "ne" | "se" | "sw";
@@ -84,6 +81,67 @@ type LayerInteraction =
       startHeight: number;
       rotation: number;
     };
+
+const PANEL_CONFIG_STORAGE_KEY = "keyboard3d.panelConfig";
+
+type ExportedProject = {
+  mode?: "preset" | "custom";
+  presetId?: string;
+  layoutPath?: string;
+  config?: Partial<SceneConfig>;
+  projectionLayers?: Array<{
+    id?: string;
+    name?: string;
+    file?: string;
+    mime?: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    rotation?: number;
+    opacity?: number;
+  }>;
+};
+
+type ThemeJson = {
+  name?: string;
+  source?: {
+    layoutPath?: string;
+  };
+  defaults?: {
+    keycap?: {
+      color?: string;
+      material?: KeycapMaterial;
+    };
+    legend?: {
+      font?: string;
+      color?: string;
+      scale?: number;
+    };
+    case?: {
+      color?: string;
+      material?: CaseMaterial;
+    };
+  };
+  keys?: Array<{
+    index?: number;
+    keycap?: {
+      color?: string;
+      material?: KeycapMaterial;
+    };
+    legend?: {
+      labels?: string[];
+      font?: string;
+      color?: string;
+      scale?: number;
+    };
+    icon?: {
+      imageUrl?: string;
+      position?: number;
+      scale?: number;
+    };
+  }>;
+};
 
 const fallbackPresets: KeyboardPreset[] = [
   {
@@ -158,6 +216,13 @@ const iconPositionOptions = [
   { label: "Bottom right", value: 8 },
 ];
 
+const legendPositionOptions = [
+  ...iconPositionOptions,
+  { label: "Front left", value: 9 },
+  { label: "Front", value: 10 },
+  { label: "Front right", value: 11 },
+];
+
 const fallbackDefaults: SceneConfig = {
   profileId: "cherry",
   rowId: "R3",
@@ -168,18 +233,20 @@ const fallbackDefaults: SceneConfig = {
   legendScale: 4,
   legendFont: '"Segoe UI"',
   legendColor: "#111111",
+  frontLegendHeight: 0.76,
   sideSpread: 0.92,
   sideEase: 1.12,
   showWire: false,
   showGhost: false,
   showProjection: false,
+  showCase: true,
   skinImage: null,
   projectionCanvas: null,
   projectionVersion: 0,
   layoutKeys: [],
   keyOverrides: {},
-  selectedKeyIndex: 0,
-  selectedKeyIndices: [0],
+  selectedKeyIndex: -1,
+  selectedKeyIndices: [],
   keycapMaterial: "pbt",
   keycapColor: "#ececec",
   caseConfig: { color: "#6f7780", material: "aluminum" },
@@ -196,6 +263,22 @@ const fallbackPanelConfig: PanelConfig = {
     { label: "60 ANSI", value: "/layouts/60_ansi_layout.json" },
     { label: "60 ISO", value: "/layouts/iso-60-layout.json" },
     { label: "ISO Compact", value: "/layouts/iso-60-layout.json" },
+  ],
+  themes: [
+    {
+      id: "ansi-night-market",
+      name: "Night Market",
+      layoutPath: "/layouts/60_ansi_layout.json",
+      path: "/themes/ansi-night-market/theme.json",
+      description: "Dark green ANSI set with warm legends.",
+    },
+    {
+      id: "iso-signal",
+      name: "Signal ISO",
+      layoutPath: "/layouts/iso-60-layout.json",
+      path: "/themes/iso-signal/theme.json",
+      description: "ISO-only contrast theme with highlighted Enter.",
+    },
   ],
   caseMaterials: [
     { label: "Aluminum", value: "aluminum" },
@@ -236,11 +319,13 @@ const fallbackPanelConfig: PanelConfig = {
     legendScale: fallbackDefaults.legendScale,
     legendFont: fallbackDefaults.legendFont,
     legendColor: fallbackDefaults.legendColor,
+    frontLegendHeight: fallbackDefaults.frontLegendHeight,
     sideSpread: fallbackDefaults.sideSpread,
     sideEase: fallbackDefaults.sideEase,
     showWire: fallbackDefaults.showWire,
     showGhost: fallbackDefaults.showGhost,
     showProjection: fallbackDefaults.showProjection,
+    showCase: fallbackDefaults.showCase,
     selectedKeyIndex: fallbackDefaults.selectedKeyIndex,
     selectedKeyIndices: fallbackDefaults.selectedKeyIndices,
     keycapMaterial: fallbackDefaults.keycapMaterial,
@@ -258,8 +343,8 @@ function sceneConfigFromPanel(panelConfig: PanelConfig): SceneConfig {
     projectionVersion: 0,
     layoutKeys: [],
     keyOverrides: {},
-    selectedKeyIndex: 0,
-    selectedKeyIndices: [0],
+    selectedKeyIndex: -1,
+    selectedKeyIndices: [],
   };
 }
 
@@ -272,6 +357,7 @@ function keyboardModelDefaults(model: KeyboardPreset) {
     keycapType: model.defaultConfig?.keycapType ?? model.profileId ?? "cherry",
     caseColor: model.defaultConfig?.caseColor ?? model.caseColor ?? "#6f7780",
     caseMaterial: model.defaultConfig?.caseMaterial ?? model.caseMaterial ?? "aluminum",
+    caseModelPath: model.defaultConfig?.caseModelPath,
     keycapMaterial: model.defaultConfig?.keycapMaterial ?? model.keycapMaterial ?? "pbt",
     keycapColor: model.defaultConfig?.keycapColor ?? "#ececec",
   };
@@ -293,6 +379,121 @@ function resolveKeyLabel(key: ParsedKey | undefined, override: KeyOverride | und
   return labels.find(Boolean) ?? key?.label ?? "Key";
 }
 
+function firstLegendSlot(labels: string[] | undefined) {
+  const index = labels?.findIndex((label) => Boolean(label?.trim())) ?? -1;
+  return index >= 0 ? index : 4;
+}
+
+function hasLegendText(labels: string[] | undefined, slot: number) {
+  return Boolean(labels?.[slot]?.trim());
+}
+
+function normalizePath(path: string) {
+  return path.replace(/^https?:\/\/[^/]+/i, "").replace(/\\/g, "/");
+}
+
+function sameLayoutPath(a: string, b: string) {
+  return normalizePath(a) === normalizePath(b);
+}
+
+function applyTheme(config: SceneConfig, theme: ThemeJson): SceneConfig {
+  const defaults = theme.defaults ?? {};
+  const keyOverrides: Record<number, KeyOverride> = {};
+
+  theme.keys?.forEach((keyTheme, fallbackIndex) => {
+    const index = Number.isInteger(keyTheme.index) ? keyTheme.index! : fallbackIndex;
+    if (index < 0 || index >= config.layoutKeys.length) return;
+
+    const override: KeyOverride = {};
+    if (keyTheme.keycap?.color) override.color = keyTheme.keycap.color;
+    if (keyTheme.keycap?.material) override.material = keyTheme.keycap.material;
+    if (keyTheme.legend?.labels) override.labels = keyTheme.legend.labels;
+    if (keyTheme.legend?.font) override.legendFont = keyTheme.legend.font;
+    if (keyTheme.legend?.color) override.legendColor = keyTheme.legend.color;
+    if (typeof keyTheme.legend?.scale === "number") override.legendScale = keyTheme.legend.scale;
+    if (keyTheme.icon?.imageUrl) override.iconImageUrl = keyTheme.icon.imageUrl;
+    if (typeof keyTheme.icon?.position === "number") override.iconPosition = keyTheme.icon.position;
+    if (typeof keyTheme.icon?.scale === "number") override.iconScale = keyTheme.icon.scale;
+
+    if (Object.keys(override).length) keyOverrides[index] = override;
+  });
+
+  return {
+    ...config,
+    keycapColor: defaults.keycap?.color ?? config.keycapColor,
+    keycapMaterial: defaults.keycap?.material ?? config.keycapMaterial,
+    legendFont: defaults.legend?.font ?? config.legendFont,
+    legendColor: defaults.legend?.color ?? config.legendColor,
+    legendScale: defaults.legend?.scale ?? config.legendScale,
+    caseConfig: {
+      color: defaults.case?.color ?? config.caseConfig.color,
+      material: defaults.case?.material ?? config.caseConfig.material,
+    },
+    keyOverrides,
+  };
+}
+
+function localPanelConfig() {
+  try {
+    const stored = localStorage.getItem(PANEL_CONFIG_STORAGE_KEY);
+    return stored ? (JSON.parse(stored) as PanelConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredZip(bytes: Uint8Array) {
+  const entries = new Map<string, Uint8Array>();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+
+  while (offset + 30 <= bytes.length) {
+    const signature = view.getUint32(offset, true);
+    if (signature !== 0x04034b50) break;
+
+    const method = view.getUint16(offset + 8, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const fileNameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + fileNameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > bytes.length) throw new Error("ZIP file is truncated.");
+    if (method !== 0) throw new Error("This importer currently supports stored ZIP entries only.");
+
+    const path = new TextDecoder().decode(bytes.slice(nameStart, nameStart + fileNameLength)).replace(/\\/g, "/");
+    entries.set(path, bytes.slice(dataStart, dataEnd));
+    offset = dataEnd;
+  }
+
+  return entries;
+}
+
+function bytesToDataUrl(bytes: Uint8Array, mime: string) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+function imageFromDataUrl(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to decode an image from the ZIP."));
+    image.src = dataUrl;
+  });
+}
+
+function mimeFromPath(path: string) {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "image/png";
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewerRef = useRef<KeycapScene | null>(null);
@@ -300,6 +501,9 @@ export default function App() {
   const projectionVersionRef = useRef(0);
   const projectionUpdateFrameRef = useRef(0);
   const pendingProjectionRef = useRef<{ canvas: HTMLCanvasElement; hasArtwork: boolean } | null>(null);
+  const previousSelectedKeyRef = useRef(-1);
+  const suppressNextLayoutLoadRef = useRef(false);
+  const suppressNextPresetApplyRef = useRef(false);
   const initialConfig = sceneConfigFromPanel(fallbackPanelConfig);
   const latestConfigRef = useRef<SceneConfig>(initialConfig);
   const [panelConfig, setPanelConfig] = useState<PanelConfig>(fallbackPanelConfig);
@@ -307,14 +511,24 @@ export default function App() {
   const [presetId, setPresetId] = useState(fallbackPanelConfig.keyboardModels[0].id);
   const [mode, setMode] = useState<"preset" | "custom">("preset");
   const [layoutPath, setLayoutPath] = useState(fallbackPanelConfig.keyboardModels[0].layoutPath);
+  const [themeId, setThemeId] = useState("");
+  const [themeError, setThemeError] = useState("");
   const [layoutError, setLayoutError] = useState("");
-  const [selectedKeys, setSelectedKeys] = useState([0]);
+  const [selectedKeys, setSelectedKeys] = useState<number[]>([]);
+  const [selectedLegendSlot, setSelectedLegendSlot] = useState(4);
   const [projectionLayers, setProjectionLayers] = useState<ProjectionLayer[]>([]);
+  const [projectionApplyVersion, setProjectionApplyVersion] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isRenderingImage, setIsRenderingImage] = useState(false);
+  const [isRenderingGeminiVideo, setIsRenderingGeminiVideo] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [importError, setImportError] = useState("");
+  const [renderError, setRenderError] = useState("");
   const activeProfile = profiles[config.profileId] ?? profiles.cherry;
-  const selectedKey = selectedKeys[selectedKeys.length - 1] ?? 0;
+  const selectedKey = selectedKeys[selectedKeys.length - 1] ?? -1;
   const isMultiSelecting = selectedKeys.length > 1;
+  const hasSelectedKey = selectedKey >= 0;
   const selected = config.layoutKeys[selectedKey];
   const selectedOverride = config.keyOverrides[selectedKey] ?? {};
   const readout = buildReadout(config);
@@ -322,41 +536,57 @@ export default function App() {
   const legendFonts = panelConfig.legendFonts;
   const iconPresets = panelConfig.iconPresets;
   const iconPositions = panelConfig.iconPositions ?? iconPositionOptions;
+  const activeThemes = useMemo(
+    () => (panelConfig.themes ?? []).filter((theme) => sameLayoutPath(theme.layoutPath, layoutPath)),
+    [panelConfig.themes, layoutPath],
+  );
   const activeKeycapColor = panelConfig.keycapColors.find((color) => color.value.toLowerCase() === config.keycapColor.toLowerCase());
 
   useEffect(() => {
     let cancelled = false;
+    const applyPanelConfig = (nextPanelConfig: PanelConfig) => {
+      const nextSceneConfig = sceneConfigFromPanel(nextPanelConfig);
+      setPanelConfig(nextPanelConfig);
+      setConfig((current) => ({
+        ...nextSceneConfig,
+        layoutKeys: current.layoutKeys,
+        projectionCanvas: projectionCanvasRef.current,
+        projectionVersion: current.projectionVersion,
+        showProjection: current.showProjection,
+      }));
+      latestConfigRef.current = {
+        ...nextSceneConfig,
+        layoutKeys: latestConfigRef.current.layoutKeys,
+        projectionCanvas: projectionCanvasRef.current,
+        projectionVersion: latestConfigRef.current.projectionVersion,
+        showProjection: latestConfigRef.current.showProjection,
+      };
+      setPresetId(nextPanelConfig.keyboardModels[0]?.id ?? fallbackPanelConfig.keyboardModels[0].id);
+      setLayoutPath(nextPanelConfig.keyboardModels[0]?.layoutPath ?? fallbackPanelConfig.keyboardModels[0].layoutPath);
+      setThemeId("");
+    };
+
     fetch("/config/panel.json")
       .then((response) => {
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
         return response.json() as Promise<PanelConfig>;
       })
-      .then((nextPanelConfig) => {
+      .then((fetchedPanelConfig) => {
         if (cancelled) return;
-        const nextSceneConfig = sceneConfigFromPanel(nextPanelConfig);
-        setPanelConfig(nextPanelConfig);
-        setConfig((current) => ({
-          ...nextSceneConfig,
-          layoutKeys: current.layoutKeys,
-          projectionCanvas: projectionCanvasRef.current,
-          projectionVersion: current.projectionVersion,
-          showProjection: current.showProjection,
-        }));
-        latestConfigRef.current = {
-          ...nextSceneConfig,
-          layoutKeys: latestConfigRef.current.layoutKeys,
-          projectionCanvas: projectionCanvasRef.current,
-          projectionVersion: latestConfigRef.current.projectionVersion,
-          showProjection: latestConfigRef.current.showProjection,
-        };
-        setPresetId(nextPanelConfig.keyboardModels[0]?.id ?? fallbackPanelConfig.keyboardModels[0].id);
-        setLayoutPath(nextPanelConfig.keyboardModels[0]?.layoutPath ?? fallbackPanelConfig.keyboardModels[0].layoutPath);
+        applyPanelConfig(localPanelConfig() ?? fetchedPanelConfig);
       })
       .catch(() => {
-        if (!cancelled) setPanelConfig(fallbackPanelConfig);
+        if (!cancelled) applyPanelConfig(localPanelConfig() ?? fallbackPanelConfig);
       });
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== PANEL_CONFIG_STORAGE_KEY) return;
+      applyPanelConfig(localPanelConfig() ?? fallbackPanelConfig);
+    };
+    window.addEventListener("storage", onStorage);
     return () => {
       cancelled = true;
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -371,6 +601,14 @@ export default function App() {
         : { ...current, selectedKeyIndex: selectedKey, selectedKeyIndices: selectedKeys },
     );
   }, [selectedKey, selectedKeys]);
+
+  useEffect(() => {
+    if (previousSelectedKeyRef.current === selectedKey) return;
+    previousSelectedKeyRef.current = selectedKey;
+    if (!hasSelectedKey || isMultiSelecting) return;
+    const labels = config.keyOverrides[selectedKey]?.labels ?? config.layoutKeys[selectedKey]?.labels;
+    setSelectedLegendSlot(firstLegendSlot(labels));
+  }, [config.keyOverrides, config.layoutKeys, hasSelectedKey, isMultiSelecting, selectedKey]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -388,6 +626,10 @@ export default function App() {
   }, [config]);
 
   useEffect(() => {
+    if (suppressNextPresetApplyRef.current) {
+      suppressNextPresetApplyRef.current = false;
+      return;
+    }
     const preset = panelConfig.keyboardModels.find((item) => item.id === presetId);
     if (!preset || mode !== "preset") return;
     const modelDefaults = keyboardModelDefaults(preset);
@@ -398,13 +640,19 @@ export default function App() {
       rowId: "R3",
       keycapMaterial: modelDefaults.keycapMaterial,
       keycapColor: modelDefaults.keycapColor,
-      caseConfig: { color: modelDefaults.caseColor, material: modelDefaults.caseMaterial },
+      caseConfig: { color: modelDefaults.caseColor, material: modelDefaults.caseMaterial, modelPath: modelDefaults.caseModelPath },
       keyOverrides: {},
     }));
-    setSelectedKeys([0]);
+    setSelectedKeys([]);
+    setThemeId("");
+    setThemeError("");
   }, [presetId, mode, panelConfig.keyboardModels]);
 
   useEffect(() => {
+    if (suppressNextLayoutLoadRef.current) {
+      suppressNextLayoutLoadRef.current = false;
+      return;
+    }
     let cancelled = false;
     fetch(layoutPath)
       .then((response) => {
@@ -416,7 +664,8 @@ export default function App() {
         const parsed = parseKLE(layout);
         setLayoutError("");
         setConfig((current) => ({ ...current, layoutKeys: parsed.keys, keyOverrides: {} }));
-        setSelectedKeys([0]);
+        setSelectedKeys([]);
+        setThemeId("");
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -427,21 +676,54 @@ export default function App() {
     };
   }, [layoutPath]);
 
+  useEffect(() => {
+    if (!themeId || activeThemes.some((theme) => theme.id === themeId)) return;
+    setThemeId("");
+    setThemeError("");
+  }, [activeThemes, themeId]);
+
   function patch(next: Partial<SceneConfig>) {
     setConfig((current) => ({ ...current, ...next }));
   }
 
+  async function onThemeChange(nextThemeId: string) {
+    setThemeId(nextThemeId);
+    setThemeError("");
+    if (!nextThemeId) return;
+
+    const theme = activeThemes.find((item) => item.id === nextThemeId);
+    if (!theme) return;
+
+    try {
+      const response = await fetch(theme.path);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const themeJson = (await response.json()) as ThemeJson;
+      const themeLayoutPath = themeJson.source?.layoutPath ?? theme.layoutPath;
+      if (!sameLayoutPath(themeLayoutPath, layoutPath) || !sameLayoutPath(theme.layoutPath, layoutPath)) {
+        throw new Error("Theme layout does not match the current keyboard layout.");
+      }
+      setConfig((current) => applyTheme(current, themeJson));
+      setSelectedKeys([]);
+    } catch (error) {
+      setThemeId("");
+      setThemeError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function patchSelectedKey(next: KeyOverride) {
+    if (!hasSelectedKey) return;
     setConfig((current) => withKeyOverride(current, selectedKey, next));
   }
 
   function patchSelectedKeys(next: KeyOverride) {
+    if (!selectedKeys.length) return;
     setConfig((current) =>
       selectedKeys.reduce((acc, index) => withKeyOverride(acc, index, next), current),
     );
   }
 
   function resetSelectedKeyAppearance() {
+    if (!selectedKeys.length) return;
     setConfig((current) => {
       const keyOverrides = { ...current.keyOverrides };
       selectedKeys.forEach((index) => {
@@ -457,7 +739,11 @@ export default function App() {
     });
   }
 
-  function toggleSelectedKey(index: number) {
+  function selectKey(index: number, multiSelect: boolean) {
+    if (!multiSelect) {
+      setSelectedKeys([index]);
+      return;
+    }
     setSelectedKeys((current) => {
       if (current.includes(index)) {
         return current.length > 1 ? current.filter((item) => item !== index) : current;
@@ -467,6 +753,7 @@ export default function App() {
   }
 
   function setSelectedLegend(value: string, slot = 4) {
+    if (!hasSelectedKey) return;
     const labels = [...(selectedOverride.labels ?? selected?.labels ?? [])];
     while (labels.length <= slot) labels.push("");
     labels[slot] = value;
@@ -529,12 +816,84 @@ export default function App() {
     event.target.value = "";
   }
 
+  function onApplyProjection() {
+    setProjectionApplyVersion((current) => current + 1);
+  }
+
+  async function onProjectZipChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || isImporting) return;
+
+    setIsImporting(true);
+    setImportError("");
+    try {
+      const entries = readStoredZip(new Uint8Array(await file.arrayBuffer()));
+      const projectBytes = entries.get("project.json");
+      if (!projectBytes) throw new Error("project.json was not found in this ZIP.");
+      const project = JSON.parse(new TextDecoder().decode(projectBytes)) as ExportedProject;
+      if (!project.config) throw new Error("project.json does not contain a config object.");
+
+      const nextLayers = await Promise.all(
+        (project.projectionLayers ?? []).map(async (layer, index) => {
+          if (!layer.file) throw new Error(`Projection layer ${index + 1} is missing its file path.`);
+          const imageBytes = entries.get(layer.file);
+          if (!imageBytes) throw new Error(`Missing projection layer image: ${layer.file}`);
+          const sourceMime = layer.mime || mimeFromPath(layer.file);
+          const sourceDataUrl = bytesToDataUrl(imageBytes, sourceMime);
+          const image = await imageFromDataUrl(sourceDataUrl);
+          return {
+            id: layer.id || `${layer.name || "layer"}-${Date.now()}-${index}`,
+            name: layer.name || layer.file.split("/").pop() || `Layer ${index + 1}`,
+            image,
+            sourceDataUrl,
+            sourceMime,
+            x: layer.x ?? 80,
+            y: layer.y ?? 60,
+            width: layer.width ?? image.naturalWidth,
+            height: layer.height ?? image.naturalHeight,
+            rotation: layer.rotation ?? 0,
+            opacity: layer.opacity ?? 0.9,
+          } satisfies ProjectionLayer;
+        }),
+      );
+
+      const importedLayoutPath = project.layoutPath || layoutPath;
+      const nextConfig: SceneConfig = {
+        ...sceneConfigFromPanel(panelConfig),
+        ...project.config,
+        skinImage: null,
+        projectionCanvas: null,
+        projectionVersion: projectionVersionRef.current,
+        selectedKeyIndex: -1,
+        selectedKeyIndices: [],
+      } as SceneConfig;
+
+      suppressNextLayoutLoadRef.current = importedLayoutPath !== layoutPath;
+      suppressNextPresetApplyRef.current = project.mode === "preset";
+      setMode(project.mode ?? "custom");
+      setPresetId(project.presetId ?? "");
+      setLayoutPath(importedLayoutPath);
+      setConfig(nextConfig);
+      latestConfigRef.current = { ...nextConfig, projectionCanvas: projectionCanvasRef.current };
+      setProjectionLayers(nextLayers);
+      setSelectedKeys([]);
+      setThemeId("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setImportError(message || "Import failed.");
+      console.error("Import failed", error);
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
   async function onExportProject() {
     if (isExporting) return;
     setIsExporting(true);
     setExportError("");
     try {
-      const blob = await exportProjectZip({
+      const blob = await FileExporter.exportProjectZip({
         mode,
         presetId,
         layoutPath,
@@ -545,7 +904,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `keyboard3d-export-${timestampForFile()}.zip`;
+      link.download = `keyboard3d-export-${FileExporter.timestampForFile()}.zip`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -556,6 +915,67 @@ export default function App() {
       console.error("Export failed", error);
     } finally {
       setIsExporting(false);
+    }
+  }
+
+  async function onRenderImage() {
+    if (isRenderingImage || !viewerRef.current) return;
+    setIsRenderingImage(true);
+    setRenderError("");
+    try {
+      const blob = await viewerRef.current.renderAdImage();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `keyboard-ad-render-${FileExporter.timestampForFile()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRenderError(message || "Render failed.");
+      console.error("Render failed", error);
+    } finally {
+      setIsRenderingImage(false);
+    }
+  }
+
+  async function onRenderGeminiVideo() {
+    if (isRenderingGeminiVideo || !viewerRef.current) return;
+    setIsRenderingGeminiVideo(true);
+    setRenderError("");
+    try {
+      const imageBlob = await viewerRef.current.renderAdImage();
+      const imageBase64 = await blobToBase64(imageBlob);
+      const response = await fetch("/api/gemini-ad-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64,
+          mimeType: imageBlob.type || "image/png",
+        }),
+      });
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(errorBody?.error || `${response.status} ${response.statusText}`);
+      }
+
+      const videoBlob = await response.blob();
+      const url = URL.createObjectURL(videoBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `keyboard-gemini-ad-${FileExporter.timestampForFile()}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRenderError(message || "Gemini video render failed.");
+      console.error("Gemini video render failed", error);
+    } finally {
+      setIsRenderingGeminiVideo(false);
     }
   }
 
@@ -571,6 +991,16 @@ export default function App() {
   }
 
   const selectedLabel = resolveKeyLabel(selected, selectedOverride);
+  const selectedLabels = selectedOverride.labels ?? selected?.labels ?? [];
+  const selectedLegendText = hasSelectedKey && !isMultiSelecting ? selectedLabels[selectedLegendSlot] ?? "" : "";
+  const filledLegendPositions = legendPositionOptions
+    .filter((position) => hasLegendText(selectedLabels, position.value))
+    .map((position) => position.label);
+  const inspectorSummary = !selectedKeys.length
+    ? "No key selected"
+    : isMultiSelecting
+      ? `${selectedKeys.length} keys selected`
+      : `#${selectedKey + 1} ${selectedLabel}`;
   const modeCopy = useMemo(
     () => keyboardModels.find((item) => item.id === presetId)?.description ?? "",
     [presetId, keyboardModels],
@@ -586,6 +1016,14 @@ export default function App() {
             <p>{panelConfig.brand.subtitle}</p>
           </div>
         </div>
+
+        <section className="control-group">
+          <label className="file-button">
+            {isImporting ? "Loading..." : "Load ZIP"}
+            <input type="file" accept=".zip,application/zip" disabled={isImporting} onChange={onProjectZipChange} />
+          </label>
+          {importError ? <p className="hint error">Load failed: {importError}</p> : null}
+        </section>
 
         <section className="control-group">
           <label htmlFor="mode">Design mode</label>
@@ -619,6 +1057,23 @@ export default function App() {
             </select>
           </section>
         )}
+
+        <section className="control-group">
+          <label htmlFor="presetTheme">预设主题</label>
+          <select id="presetTheme" value={themeId} onChange={(event) => void onThemeChange(event.target.value)}>
+            <option value="">No theme</option>
+            {activeThemes.map((theme) => (
+              <option value={theme.id} key={theme.id}>
+                {theme.name}
+              </option>
+            ))}
+          </select>
+          {themeError ? (
+            <p className="hint error">{themeError}</p>
+          ) : (
+            <p className="hint">{activeThemes.find((theme) => theme.id === themeId)?.description ?? `${activeThemes.length} layout theme(s)`}</p>
+          )}
+        </section>
 
         <section className="control-grid">
           <label>
@@ -690,6 +1145,19 @@ export default function App() {
           />
         </section>
 
+        <section className="control-group">
+          <label htmlFor="frontLegendHeight">Side legend height {Math.round(config.frontLegendHeight * 100)}%</label>
+          <input
+            id="frontLegendHeight"
+            type="range"
+            min="0.45"
+            max="0.95"
+            step="0.01"
+            value={config.frontLegendHeight}
+            onChange={(event) => patch({ frontLegendHeight: Number(event.target.value) })}
+          />
+        </section>
+
         <section className="control-grid">
           <label>
             Legend font
@@ -711,6 +1179,10 @@ export default function App() {
           <label>
             <input type="checkbox" checked={config.showProjection} onChange={(event) => patch({ showProjection: event.target.checked })} />
             PNG projection
+          </label>
+          <label>
+            <input type="checkbox" checked={config.showCase} onChange={(event) => patch({ showCase: event.target.checked })} />
+            Case
           </label>
           <label>
             <input type="checkbox" checked={config.showWire} onChange={(event) => patch({ showWire: event.target.checked })} />
@@ -735,9 +1207,24 @@ export default function App() {
                 {materialLabel(config.keycapMaterial)} keycaps
               </span>
             </div>
-            <button id="resetView" title="Reset view" aria-label="Reset view" onClick={() => viewerRef.current?.resetCamera()}>
-              鈫?            </button>
+            <div className="toolbar-actions">
+              <button className="toolbar-button render-button" type="button" disabled={isRenderingImage || isRenderingGeminiVideo} onClick={() => void onRenderImage()}>
+                {isRenderingImage ? "渲染中" : "渲染高清图"}
+              </button>
+              <button
+                className="toolbar-button render-button"
+                type="button"
+                disabled={isRenderingImage || isRenderingGeminiVideo}
+                onClick={() => void onRenderGeminiVideo()}
+              >
+                {isRenderingGeminiVideo ? "生成视频中" : "生成广告视频"}
+              </button>
+              <button className="toolbar-button" id="resetView" title="Reset view" aria-label="Reset view" onClick={() => viewerRef.current?.resetCamera()}>
+                鈫?
+              </button>
+            </div>
           </div>
+          {renderError ? <p className="render-error">Render failed: {renderError}</p> : null}
           <canvas ref={canvasRef} />
         </section>
 
@@ -753,6 +1240,9 @@ export default function App() {
                   Add PNG
                   <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={onPngChange} />
                 </label>
+                <button className="secondary-button" type="button" onClick={onApplyProjection}>
+                  Apply
+                </button>
                 <button className="secondary-button" type="button" disabled={isExporting} onClick={onExportProject}>
                   {isExporting ? "Exporting..." : "Export"}
                 </button>
@@ -763,7 +1253,8 @@ export default function App() {
               keys={config.layoutKeys}
               layers={projectionLayers}
               selectedKeys={selectedKeys}
-              onSelectKey={toggleSelectedKey}
+              applyVersion={projectionApplyVersion}
+              onSelectKey={selectKey}
               onClearSelection={() => setSelectedKeys([])}
               onLayersChange={setProjectionLayers}
               onProjectionCanvas={onProjectionCanvas}
@@ -775,7 +1266,7 @@ export default function App() {
               <div>
                 <h2>Key Inspector</h2>
                 <p>
-                  {isMultiSelecting ? `${selectedKeys.length} keys selected` : `#${selectedKey + 1} ${selectedLabel}`}
+                  {inspectorSummary}
                 </p>
               </div>
             </div>
@@ -785,6 +1276,7 @@ export default function App() {
                 Key cap color
                 <select
                   value={selectedOverride.color ?? ""}
+                  disabled={!selectedKeys.length}
                   onChange={(event) => patchSelectedKeys({ color: event.target.value || undefined })}
                 >
                   <option value="">Keyboard default ({activeKeycapColor?.label ?? config.keycapColor})</option>
@@ -799,6 +1291,7 @@ export default function App() {
                 Key material
                 <select
                   value={selectedOverride.material ?? ""}
+                  disabled={!selectedKeys.length}
                   onChange={(event) => patchSelectedKeys({ material: event.target.value ? (event.target.value as KeycapMaterial) : undefined })}
                 >
                   <option value="">Keyboard default ({materialLabel(config.keycapMaterial)})</option>
@@ -812,20 +1305,48 @@ export default function App() {
             </section>
 
             <section className="control-group">
-              <button type="button" onClick={resetSelectedKeyAppearance}>
+              <button type="button" disabled={!selectedKeys.length} onClick={resetSelectedKeyAppearance}>
                 Reset key appearance
               </button>
             </section>
 
             <section className="control-group">
+              <label htmlFor="legendSlot">Legend position</label>
+              <select
+                id="legendSlot"
+                value={selectedLegendSlot}
+                disabled={!hasSelectedKey || isMultiSelecting}
+                onChange={(event) => setSelectedLegendSlot(Number(event.target.value))}
+              >
+                {legendPositionOptions.map((position) => (
+                  <option
+                    className={hasLegendText(selectedLabels, position.value) ? "filled-option" : undefined}
+                    value={position.value}
+                    key={position.value}
+                  >
+                    {hasLegendText(selectedLabels, position.value) ? "● " : ""}{position.label}
+                  </option>
+                ))}
+              </select>
+              {hasSelectedKey && !isMultiSelecting && filledLegendPositions.length ? (
+                <p className="hint legend-filled-hint">Filled: {filledLegendPositions.join(", ")}</p>
+              ) : null}
+            </section>
+
+            <section className="control-group">
               <label htmlFor="keyLegend">Legend text</label>
-              <input id="keyLegend" value={isMultiSelecting ? "" : selectedLabel} disabled={isMultiSelecting} onChange={(event) => setSelectedLegend(event.target.value)} />
+              <input
+                id="keyLegend"
+                value={selectedLegendText}
+                disabled={!hasSelectedKey || isMultiSelecting}
+                onChange={(event) => setSelectedLegend(event.target.value, selectedLegendSlot)}
+              />
             </section>
 
             <section className="control-grid">
               <label>
                 Key font
-                <select value={selectedOverride.legendFont ?? config.legendFont} onChange={(event) => patchSelectedKey({ legendFont: event.target.value })}>
+                <select disabled={!selectedKeys.length} value={selectedOverride.legendFont ?? config.legendFont} onChange={(event) => patchSelectedKeys({ legendFont: event.target.value })}>
                   {legendFonts.map((font) => (
                     <option value={font.value} key={font.value}>
                       {font.label}
@@ -838,7 +1359,8 @@ export default function App() {
                 <input
                   type="color"
                   value={selectedOverride.legendColor ?? config.legendColor}
-                  onChange={(event) => patchSelectedKey({ legendColor: event.target.value })}
+                  disabled={!selectedKeys.length}
+                  onChange={(event) => patchSelectedKeys({ legendColor: event.target.value })}
                 />
               </label>
             </section>
@@ -848,7 +1370,7 @@ export default function App() {
               <select
                 id="iconSelect"
                 value={selectedOverride.iconImageUrl ?? ""}
-                disabled={isMultiSelecting}
+                disabled={!hasSelectedKey || isMultiSelecting}
                 onChange={(event) =>
                   patchSelectedKey({ iconImageUrl: event.target.value, iconPosition: selectedOverride.iconPosition ?? 4, iconScale: selectedOverride.iconScale ?? 1 })
                 }
@@ -861,7 +1383,7 @@ export default function App() {
               </select>
               <label className="file-button">
                 Upload PNG icon
-                <input type="file" accept="image/png" disabled={isMultiSelecting} onChange={onIconPngChange} />
+                <input type="file" accept="image/png" disabled={!hasSelectedKey || isMultiSelecting} onChange={onIconPngChange} />
               </label>
             </section>
 
@@ -870,6 +1392,7 @@ export default function App() {
               <select
                 id="iconPosition"
                 value={selectedOverride.iconPosition ?? 4}
+                disabled={!hasSelectedKey || isMultiSelecting}
                 onChange={(event) => patchSelectedKey({ iconPosition: Number(event.target.value) })}
               >
                 {iconPositions.map((position) => (
@@ -889,6 +1412,7 @@ export default function App() {
                 max="1.8"
                 step="0.1"
                 value={selectedOverride.iconScale ?? 1}
+                disabled={!hasSelectedKey || isMultiSelecting}
                 onChange={(event) => patchSelectedKey({ iconScale: Number(event.target.value) })}
               />
             </section>
@@ -902,7 +1426,8 @@ export default function App() {
                 max="10"
                 step="0.1"
                 value={selectedOverride.legendScale ?? config.legendScale}
-                onChange={(event) => patchSelectedKey({ legendScale: Number(event.target.value) })}
+                disabled={!selectedKeys.length}
+                onChange={(event) => patchSelectedKeys({ legendScale: Number(event.target.value) })}
               />
             </section>
 
@@ -921,6 +1446,7 @@ function ProjectionDesigner({
   keys,
   layers,
   selectedKeys,
+  applyVersion,
   onSelectKey,
   onClearSelection,
   onLayersChange,
@@ -929,7 +1455,8 @@ function ProjectionDesigner({
   keys: ParsedKey[];
   layers: ProjectionLayer[];
   selectedKeys: number[];
-  onSelectKey: (index: number) => void;
+  applyVersion: number;
+  onSelectKey: (index: number, multiSelect: boolean) => void;
   onClearSelection: () => void;
   onLayersChange: (layers: ProjectionLayer[]) => void;
   onProjectionCanvas: (canvas: HTMLCanvasElement, hasArtwork: boolean) => void;
@@ -939,6 +1466,7 @@ function ProjectionDesigner({
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const dragRef = useRef<LayerInteraction | null>(null);
   const layersRef = useRef(layers);
+  const lastApplyVersionRef = useRef(applyVersion);
 
   useEffect(() => {
     layersRef.current = layers;
@@ -1049,8 +1577,14 @@ function ProjectionDesigner({
   }, [keys, selectedKeys, selectedLayerId, frame, onProjectionCanvas]);
 
   useEffect(() => {
-    renderProjectionCanvas(layers, { publish: !dragRef.current });
+    renderProjectionCanvas(layers, { publish: false });
   }, [layers, selectedLayerId, renderProjectionCanvas]);
+
+  useEffect(() => {
+    if (lastApplyVersionRef.current === applyVersion) return;
+    lastApplyVersionRef.current = applyVersion;
+    renderProjectionCanvas(layersRef.current, { publish: true });
+  }, [applyVersion, renderProjectionCanvas]);
 
   function canvasPoint(event: PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current!;
@@ -1088,7 +1622,7 @@ function ProjectionDesigner({
   function commitLayers(nextLayers: ProjectionLayer[]) {
     layersRef.current = nextLayers;
     onLayersChange(nextLayers);
-    renderProjectionCanvas(nextLayers, { publish: true });
+    renderProjectionCanvas(nextLayers, { publish: false });
   }
 
   function onPointerDown(event: PointerEvent<HTMLCanvasElement>) {
@@ -1143,7 +1677,7 @@ function ProjectionDesigner({
     }
     setSelectedLayerId(null);
     const keyIndex = pickKey(point);
-    if (keyIndex >= 0) onSelectKey(keyIndex);
+    if (keyIndex >= 0) onSelectKey(keyIndex, event.ctrlKey);
     else onClearSelection();
   }
 
@@ -1164,7 +1698,7 @@ function ProjectionDesigner({
   function onPointerUp(event: PointerEvent<HTMLCanvasElement>) {
     const nextLayers = layersRef.current;
     onLayersChange(nextLayers);
-    renderProjectionCanvas(nextLayers, { publish: true });
+    renderProjectionCanvas(nextLayers, { publish: false });
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -1283,6 +1817,15 @@ function angleFrom(centerX: number, centerY: number, point: { x: number; y: numb
   return Math.atan2(point.y - centerY, point.x - centerX);
 }
 
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to encode image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function drawLayerHandles(ctx: CanvasRenderingContext2D, layer: ProjectionLayer, dpr: number) {
   const corners = layerCorners(layer);
   const scaledCorners = [corners.nw, corners.ne, corners.se, corners.sw].map((point) => ({ x: point.x * dpr, y: point.y * dpr }));
@@ -1354,871 +1897,6 @@ function drawLayerHandles(ctx: CanvasRenderingContext2D, layer: ProjectionLayer,
   ctx.lineTo(deleteX - deleteSize * 0.22, deleteY + deleteSize * 0.22);
   ctx.stroke();
   ctx.restore();
-}
-
-type ExportProjectInput = {
-  mode: "preset" | "custom";
-  presetId: string;
-  layoutPath: string;
-  config: SceneConfig;
-  layers: ProjectionLayer[];
-  projectionCanvas: HTMLCanvasElement | null;
-};
-
-async function exportProjectZip(input: ExportProjectInput) {
-  const imageFiles = await Promise.all(
-    input.layers.map(async (layer, index) => {
-      const image = await layerImageBytes(layer);
-      const extension = extensionFromMime(image.mime, layer.name);
-      const path = `assets/images/${String(index + 1).padStart(2, "0")}-${safeFileBase(layer.name)}.${extension}`;
-      return { layer, image, path };
-    }),
-  );
-  const transferSheet = await createHeatTransferSheet(input.config, input.projectionCanvas);
-  const faceCuts = await createHeatTransferFaceCuts(input.config, input.projectionCanvas);
-
-  const project = {
-    schemaVersion: 1,
-    exportedAt: new Date().toISOString(),
-    app: "keyboard3d",
-    mode: input.mode,
-    presetId: input.presetId,
-    layoutPath: input.layoutPath,
-    config: exportableConfig(input.config),
-    heatTransferSheet: {
-      file: "production/heat-transfer-sheet.png",
-      dpi: HEAT_TRANSFER_DPI,
-      pxPerMm: HEAT_TRANSFER_PX_PER_MM,
-      keySpacingMm: HEAT_TRANSFER_KEY_SPACING_MM,
-      sizePx: { width: transferSheet.canvas.width, height: transferSheet.canvas.height },
-      sizeMm: {
-        width: transferSheet.canvas.width / HEAT_TRANSFER_PX_PER_MM,
-        height: transferSheet.canvas.height / HEAT_TRANSFER_PX_PER_MM,
-      },
-      layout: transferSheet.layout,
-    },
-    heatTransferFaces: {
-      directory: "production/key-faces",
-      dpi: HEAT_TRANSFER_DPI,
-      pxPerMm: HEAT_TRANSFER_PX_PER_MM,
-      files: faceCuts.map(({ data, ...face }) => face),
-    },
-    projectionLayers: imageFiles.map(({ layer, image, path }) => ({
-      id: layer.id,
-      name: layer.name,
-      file: path,
-      mime: image.mime,
-      x: layer.x,
-      y: layer.y,
-      width: layer.width,
-      height: layer.height,
-      rotation: layer.rotation,
-      rotationDegrees: (layer.rotation * 180) / Math.PI,
-      opacity: layer.opacity,
-      naturalWidth: layer.image.naturalWidth,
-      naturalHeight: layer.image.naturalHeight,
-    })),
-  };
-
-  const encoder = new TextEncoder();
-  return createZip([
-    { path: "project.json", data: encoder.encode(JSON.stringify(project, null, 2)) },
-    { path: "production/heat-transfer-sheet.png", data: transferSheet.png },
-    ...faceCuts.map(({ path, data }) => ({ path, data })),
-    ...imageFiles.map(({ image, path }) => ({ path, data: image.data })),
-  ]);
-}
-
-function exportableConfig(config: SceneConfig) {
-  const { skinImage, projectionCanvas, projectionVersion, ...rest } = config;
-  void skinImage;
-  void projectionCanvas;
-  void projectionVersion;
-  return rest;
-}
-
-const KEY_UNIT_MM = 19.05;
-const HEAT_TRANSFER_DPI = 300;
-const HEAT_TRANSFER_PX_PER_MM = HEAT_TRANSFER_DPI / 25.4;
-const HEAT_TRANSFER_KEY_SPACING_MM = 5;
-const HEAT_TRANSFER_BLEED_PX = 2;
-const HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX = 6;
-const HEAT_TRANSFER_SEAM_REPAIR_PX = 10;
-
-type HeatTransferFaceName = "top" | "back" | "front" | "left" | "right";
-
-type HeatTransferTile = {
-  key: ParsedKey;
-  topW: number;
-  topH: number;
-  sideX: number;
-  sideY: number;
-  projectedBottomW: number;
-  projectedBottomH: number;
-  projectedInsetX: number;
-  projectedInsetY: number;
-};
-
-type HeatTransferSourceRect = {
-  sourceX: number;
-  sourceY: number;
-  sourceW: number;
-  sourceH: number;
-};
-
-type HeatTransferFrame = {
-  minX: number;
-  minY: number;
-  frameW: number;
-  frameH: number;
-};
-
-async function createHeatTransferSheet(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
-  const keys = config.layoutKeys;
-  if (!keys.length) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1;
-    canvas.height = 1;
-    return { canvas, png: await canvasToPngBytes(canvas), layout: [] };
-  }
-
-  const minX = Math.min(...keys.map((key) => key.x));
-  const minY = Math.min(...keys.map((key) => key.y));
-  const maxX = Math.max(...keys.map((key) => key.x + key.w));
-  const maxY = Math.max(...keys.map((key) => key.y + key.h));
-  const frameW = Math.max(1, maxX - minX);
-  const frameH = Math.max(1, maxY - minY);
-  const spacingPx = Math.round(HEAT_TRANSFER_KEY_SPACING_MM * HEAT_TRANSFER_PX_PER_MM);
-  const paddingPx = spacingPx;
-
-  const rows = groupKeysForTransfer(keys);
-  const tiles = rows.map((row) =>
-    row.map((key) => heatTransferTileForKey(config, key)),
-  );
-
-  const rowSizes = tiles.map((row) => ({
-    width: row.reduce((sum, tile, index) => sum + tile.sideX * 2 + tile.topW + (index ? spacingPx : 0), 0),
-    height: Math.max(...row.map((tile) => tile.sideY * 2 + tile.topH)),
-  }));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, paddingPx * 2 + Math.max(...rowSizes.map((row) => row.width)));
-  canvas.height = Math.max(1, paddingPx * 2 + rowSizes.reduce((sum, row, index) => sum + row.height + (index ? spacingPx : 0), 0));
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return { canvas, png: await canvasToPngBytes(canvas), layout: [] };
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const layout: Array<Record<string, unknown>> = [];
-  let cursorY = paddingPx;
-  for (let rowIndex = 0; rowIndex < tiles.length; rowIndex += 1) {
-    const row = tiles[rowIndex];
-    let cursorX = paddingPx;
-    for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
-      const tile = row[columnIndex];
-      const tileW = tile.sideX * 2 + tile.topW;
-      const tileH = tile.sideY * 2 + tile.topH;
-      await drawHeatTransferTile(ctx, projectionCanvas, tile, cursorX, cursorY, {
-        minX,
-        minY,
-        frameW,
-        frameH,
-        config,
-        keyIndex: keys.indexOf(tile.key),
-      });
-      const unwrap = heatTransferUnwrapMetrics(tile);
-      layout.push({
-        row: rowIndex,
-        column: columnIndex,
-        label: tile.key.label,
-        source: { x: tile.key.x, y: tile.key.y, w: tile.key.w, h: tile.key.h },
-        sheetPx: { x: cursorX, y: cursorY, width: tileW, height: tileH },
-        sheetMm: {
-          x: cursorX / HEAT_TRANSFER_PX_PER_MM,
-          y: cursorY / HEAT_TRANSFER_PX_PER_MM,
-          width: tileW / HEAT_TRANSFER_PX_PER_MM,
-          height: tileH / HEAT_TRANSFER_PX_PER_MM,
-        },
-        faces: {
-          back: { x: tile.sideX, y: 0, width: tile.topW, height: tile.sideY },
-          left: { x: 0, y: tile.sideY, width: tile.sideX, height: tile.topH },
-          top: { x: tile.sideX, y: tile.sideY, width: tile.topW, height: tile.topH },
-          right: { x: tile.sideX + tile.topW, y: tile.sideY, width: tile.sideX, height: tile.topH },
-          front: { x: tile.sideX, y: tile.sideY + tile.topH, width: tile.topW, height: tile.sideY },
-        },
-        unwrap3x3: {
-          cornerWidthPx: unwrap.cornerW,
-          cornerHeightPx: unwrap.cornerH,
-          centerPx: { x: tile.sideX, y: tile.sideY, width: tile.topW, height: tile.topH },
-          sideDepthPx: { x: tile.sideX, y: tile.sideY },
-          projectedInsetPx: { x: tile.projectedInsetX, y: tile.projectedInsetY },
-        },
-      });
-      cursorX += tileW + spacingPx;
-    }
-    cursorY += rowSizes[rowIndex].height + spacingPx;
-  }
-
-  return { canvas, png: await canvasToPngBytes(canvas), layout };
-}
-
-async function createHeatTransferFaceCuts(config: SceneConfig, projectionCanvas: HTMLCanvasElement | null) {
-  const keys = config.layoutKeys;
-  if (!keys.length) return [];
-
-  const frame = heatTransferFrameForKeys(keys);
-  const cuts: Array<{
-    path: string;
-    data: Uint8Array;
-    keyIndex: number;
-    keyLabel: string;
-    face: HeatTransferFaceName;
-    sizePx: { width: number; height: number };
-    sizeMm: { width: number; height: number };
-  }> = [];
-
-  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
-    const key = keys[keyIndex];
-    const tile = heatTransferTileForKey(config, key);
-    const override = config.keyOverrides[keyIndex] ?? {};
-    const keyLabel = resolveKeyLabel(key, override);
-    const source = projectionCanvas ? heatTransferSourceForKey(tile, projectionCanvas, frame) : null;
-    const faceNames: HeatTransferFaceName[] = ["top", "back", "front", "left", "right"];
-
-    for (const face of faceNames) {
-      const canvas = await createHeatTransferFaceCanvas(config, projectionCanvas, tile, keyIndex, face, source);
-      const keySlug = safeFileBase(`${String(keyIndex + 1).padStart(3, "0")}-${keyLabel}`);
-      const path = `production/key-faces/${keySlug}-${face}.png`;
-      cuts.push({
-        path,
-        data: await canvasToPngBytes(canvas),
-        keyIndex,
-        keyLabel,
-        face,
-        sizePx: { width: canvas.width, height: canvas.height },
-        sizeMm: {
-          width: canvas.width / HEAT_TRANSFER_PX_PER_MM,
-          height: canvas.height / HEAT_TRANSFER_PX_PER_MM,
-        },
-      });
-    }
-  }
-
-  return cuts;
-}
-
-async function createHeatTransferFaceCanvas(
-  config: SceneConfig,
-  projectionCanvas: HTMLCanvasElement | null,
-  tile: HeatTransferTile,
-  keyIndex: number,
-  face: HeatTransferFaceName,
-  source: HeatTransferSourceRect | null,
-) {
-  const canvas = document.createElement("canvas");
-  const faceSize = heatTransferFaceSize(tile, face);
-  canvas.width = faceSize.width;
-  canvas.height = faceSize.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return canvas;
-
-  drawHeatTransferFaceBase(ctx, tile, config, keyIndex, face);
-  if (projectionCanvas && source) {
-    drawHeatTransferFaceArtwork(ctx, projectionCanvas, tile, face, source);
-  }
-  await drawHeatTransferFaceLegends(ctx, tile, config, keyIndex, face);
-  return canvas;
-}
-
-function heatTransferFrameForKeys(keys: ParsedKey[]): HeatTransferFrame {
-  const minX = Math.min(...keys.map((key) => key.x));
-  const minY = Math.min(...keys.map((key) => key.y));
-  const maxX = Math.max(...keys.map((key) => key.x + key.w));
-  const maxY = Math.max(...keys.map((key) => key.y + key.h));
-  return {
-    minX,
-    minY,
-    frameW: Math.max(1, maxX - minX),
-    frameH: Math.max(1, maxY - minY),
-  };
-}
-
-function heatTransferSourceForKey(tile: HeatTransferTile, projectionCanvas: HTMLCanvasElement, frame: HeatTransferFrame): HeatTransferSourceRect {
-  return {
-    sourceX: ((tile.key.x - frame.minX) / frame.frameW) * projectionCanvas.width,
-    sourceY: ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height,
-    sourceW: (tile.key.w / frame.frameW) * projectionCanvas.width,
-    sourceH: (tile.key.h / frame.frameH) * projectionCanvas.height,
-  };
-}
-
-function heatTransferFaceSize(tile: HeatTransferTile, face: HeatTransferFaceName) {
-  if (face === "left" || face === "right") return { width: tile.sideX, height: tile.topH };
-  if (face === "back" || face === "front") return { width: tile.topW, height: tile.sideY };
-  return { width: tile.topW, height: tile.topH };
-}
-
-function drawHeatTransferFaceBase(
-  ctx: CanvasRenderingContext2D,
-  tile: HeatTransferTile,
-  config: SceneConfig,
-  keyIndex: number,
-  face: HeatTransferFaceName,
-) {
-  const override = config.keyOverrides[keyIndex] ?? {};
-  const color = override.color ?? tile.key.color ?? config.keycapColor;
-  ctx.fillStyle = face === "top" ? color : shadeColor(color, -12);
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-}
-
-function drawHeatTransferFaceArtwork(
-  ctx: CanvasRenderingContext2D,
-  projectionCanvas: HTMLCanvasElement,
-  tile: HeatTransferTile,
-  face: HeatTransferFaceName,
-  source: HeatTransferSourceRect,
-) {
-  const sourceBandX = Math.max(1, source.sourceW * (tile.projectedInsetX / tile.projectedBottomW));
-  const sourceBandY = Math.max(1, source.sourceH * (tile.projectedInsetY / tile.projectedBottomH));
-  const sourceCenterW = Math.max(1, source.sourceW - sourceBandX * 2);
-  const sourceCenterH = Math.max(1, source.sourceH - sourceBandY * 2);
-  const sx1 = source.sourceX + sourceBandX;
-  const sx2 = source.sourceX + source.sourceW - sourceBandX;
-  const sy1 = source.sourceY + sourceBandY;
-  const sy2 = source.sourceY + source.sourceH - sourceBandY;
-
-  if (face === "top") {
-    drawClippedImage(ctx, projectionCanvas, sx1, sy1, sourceCenterW, sourceCenterH, 0, 0, tile.topW, tile.topH);
-  } else if (face === "back") {
-    drawClippedImage(ctx, projectionCanvas, sx1, source.sourceY, sourceCenterW, sourceBandY, 0, 0, tile.topW, tile.sideY);
-  } else if (face === "front") {
-    drawClippedImage(ctx, projectionCanvas, sx1, sy2, sourceCenterW, sourceBandY, 0, 0, tile.topW, tile.sideY);
-  } else if (face === "left") {
-    drawClippedImage(ctx, projectionCanvas, source.sourceX, sy1, sourceBandX, sourceCenterH, 0, 0, tile.sideX, tile.topH);
-  } else {
-    drawClippedImage(ctx, projectionCanvas, sx2, sy1, sourceBandX, sourceCenterH, 0, 0, tile.sideX, tile.topH);
-  }
-}
-
-async function drawHeatTransferFaceLegends(
-  ctx: CanvasRenderingContext2D,
-  tile: HeatTransferTile,
-  config: SceneConfig,
-  keyIndex: number,
-  face: HeatTransferFaceName,
-) {
-  const { entries, legendScale, legendFont } = heatTransferLegendContext(tile, config, keyIndex);
-  if (face === "top") {
-    drawLegendEntries(ctx, entries.filter((entry) => entry.index < 9), {
-      x: 0,
-      y: 0,
-      width: tile.topW,
-      height: tile.topH,
-      fontScale: Math.min(tile.topW, tile.topH) / 512,
-      legendScale,
-      legendFont,
-    });
-
-    const iconUrl = config.keyOverrides[keyIndex]?.iconImageUrl;
-    if (!iconUrl) return;
-    const icon = await loadExportImage(iconUrl);
-    if (!icon) return;
-    const override = config.keyOverrides[keyIndex] ?? {};
-    const [iconX, iconY] = EXPORT_LEGEND_POSITIONS[Math.max(0, Math.min(8, override.iconPosition ?? 4))] ?? EXPORT_LEGEND_POSITIONS[4];
-    const iconSize = tile.topW * 0.42 * Math.max(0.2, Math.min(2.4, override.iconScale ?? 1));
-    ctx.drawImage(icon, iconX * tile.topW - iconSize / 2, iconY * tile.topH - iconSize / 2, iconSize, iconSize);
-    return;
-  }
-
-  if (face === "front") {
-    drawLegendEntries(ctx, entries.filter((entry) => entry.index >= 9), {
-      x: 0,
-      y: 0,
-      width: tile.topW,
-      height: tile.sideY,
-      fontScale: Math.min(tile.topW, tile.sideY) / 512,
-      legendScale,
-      legendFont,
-    });
-  }
-}
-
-function groupKeysForTransfer(keys: ParsedKey[]) {
-  const rows: ParsedKey[][] = [];
-  keys
-    .slice()
-    .sort((a, b) => a.y - b.y || a.x - b.x)
-    .forEach((key) => {
-      const row = rows.find((items) => Math.abs(items[0].y - key.y) < 0.01);
-      if (row) row.push(key);
-      else rows.push([key]);
-    });
-  rows.forEach((row) => row.sort((a, b) => a.x - b.x));
-  return rows;
-}
-
-function heatTransferTileForKey(config: SceneConfig, key: ParsedKey): HeatTransferTile {
-  const profile = profiles[config.profileId] ?? profiles.cherry;
-  const row = key.profileRow === "SB" ? config.rowId : key.profileRow;
-  const cfg = { ...profile.common, ...profile.rows[row], dishDepth: config.dishDepth };
-  const bottomWmm = profile.common.bottomKeyWidth + (key.w - 1) * KEY_UNIT_MM;
-  const bottomHmm = profile.common.bottomKeyHeight + (key.h - 1) * KEY_UNIT_MM;
-  const topWmm = Math.max(6, bottomWmm - profile.common.widthDifference);
-  const topHmm = Math.max(6, bottomHmm - profile.common.heightDifference);
-  const insetXmm = Math.max(0.1, (bottomWmm - topWmm) / 2);
-  const insetYmm = Math.max(0.1, (bottomHmm - topHmm) / 2);
-  const sideXmm = Math.hypot(insetXmm, cfg.totalDepth);
-  const sideYmm = Math.hypot(insetYmm, cfg.totalDepth);
-  const px = HEAT_TRANSFER_PX_PER_MM;
-
-  return {
-    key,
-    topW: Math.round(topWmm * px),
-    topH: Math.round(topHmm * px),
-    sideX: Math.round(sideXmm * px),
-    sideY: Math.round(sideYmm * px),
-    projectedBottomW: Math.max(1, bottomWmm * px),
-    projectedBottomH: Math.max(1, bottomHmm * px),
-    projectedInsetX: Math.max(1, insetXmm * px),
-    projectedInsetY: Math.max(1, insetYmm * px),
-  };
-}
-
-async function drawHeatTransferTile(
-  ctx: CanvasRenderingContext2D,
-  projectionCanvas: HTMLCanvasElement | null,
-  tile: HeatTransferTile,
-  x: number,
-  y: number,
-  frame: HeatTransferFrame & { config: SceneConfig; keyIndex: number },
-) {
-  drawHeatTransferKeyBase(ctx, tile, x, y, frame.config, frame.keyIndex);
-  if (projectionCanvas) {
-    const sourceX = ((tile.key.x - frame.minX) / frame.frameW) * projectionCanvas.width;
-    const sourceY = ((tile.key.y - frame.minY) / frame.frameH) * projectionCanvas.height;
-    const sourceW = (tile.key.w / frame.frameW) * projectionCanvas.width;
-    const sourceH = (tile.key.h / frame.frameH) * projectionCanvas.height;
-    drawHeatTransferUnwrap3x3(ctx, projectionCanvas, tile, x, y, { sourceX, sourceY, sourceW, sourceH });
-  }
-  await drawHeatTransferLegends(ctx, tile, x, y, frame.config, frame.keyIndex);
-}
-
-function drawHeatTransferUnwrap3x3(
-  ctx: CanvasRenderingContext2D,
-  projectionCanvas: HTMLCanvasElement,
-  tile: HeatTransferTile,
-  x: number,
-  y: number,
-  source: { sourceX: number; sourceY: number; sourceW: number; sourceH: number },
-) {
-  const sourceBandX = Math.max(1, source.sourceW * (tile.projectedInsetX / tile.projectedBottomW));
-  const sourceBandY = Math.max(1, source.sourceH * (tile.projectedInsetY / tile.projectedBottomH));
-  const sourceCenterW = Math.max(1, source.sourceW - sourceBandX * 2);
-  const sourceCenterH = Math.max(1, source.sourceH - sourceBandY * 2);
-  const { cornerW, cornerH } = heatTransferUnwrapMetrics(tile);
-  const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
-
-  const sx0 = source.sourceX;
-  const sx1 = source.sourceX + sourceBandX;
-  const sx2 = source.sourceX + source.sourceW - sourceBandX;
-  const sy0 = source.sourceY;
-  const sy1 = source.sourceY + sourceBandY;
-  const sy2 = source.sourceY + source.sourceH - sourceBandY;
-  const topX = x + tile.sideX;
-  const topY = y + tile.sideY;
-
-  drawClippedImage(ctx, projectionCanvas, sx1, sy1, sourceCenterW, sourceCenterH, topX - overlap, topY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
-
-  drawClippedImage(ctx, projectionCanvas, sx1, sy0, sourceCenterW, sourceBandY, topX + cornerW, y, Math.max(1, tile.topW - cornerW * 2), tile.sideY + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx1, sy2, sourceCenterW, sourceBandY, topX + cornerW, topY + tile.topH - overlap, Math.max(1, tile.topW - cornerW * 2), tile.sideY + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx0, sy1, sourceBandX, sourceCenterH, x, topY + cornerH, tile.sideX + overlap, Math.max(1, tile.topH - cornerH * 2));
-  drawClippedImage(ctx, projectionCanvas, sx2, sy1, sourceBandX, sourceCenterH, topX + tile.topW - overlap, topY + cornerH, tile.sideX + overlap, Math.max(1, tile.topH - cornerH * 2));
-
-  drawClippedImage(ctx, projectionCanvas, sx0, sy0, sourceBandX, sourceBandY, x, topY, tile.sideX + overlap, cornerH + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx0, sy2, sourceBandX, sourceBandY, x, topY + tile.topH - cornerH, tile.sideX + overlap, cornerH + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx2, sy0, sourceBandX, sourceBandY, topX + tile.topW - overlap, topY, tile.sideX + overlap, cornerH + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx2, sy2, sourceBandX, sourceBandY, topX + tile.topW - overlap, topY + tile.topH - cornerH, tile.sideX + overlap, cornerH + overlap);
-
-  drawClippedImage(ctx, projectionCanvas, sx0, sy0, sourceBandX, sourceBandY, topX, y, cornerW + overlap, tile.sideY + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx2, sy0, sourceBandX, sourceBandY, topX + tile.topW - cornerW, y, cornerW + overlap, tile.sideY + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx0, sy2, sourceBandX, sourceBandY, topX, topY + tile.topH - overlap, cornerW + overlap, tile.sideY + overlap);
-  drawClippedImage(ctx, projectionCanvas, sx2, sy2, sourceBandX, sourceBandY, topX + tile.topW - cornerW, topY + tile.topH - overlap, cornerW + overlap, tile.sideY + overlap);
-}
-
-function heatTransferUnwrapMetrics(tile: HeatTransferTile) {
-  return {
-    cornerW: Math.min(tile.sideX, Math.max(1, tile.topW * (tile.projectedInsetX / tile.projectedBottomW))),
-    cornerH: Math.min(tile.sideY, Math.max(1, tile.topH * (tile.projectedInsetY / tile.projectedBottomH))),
-  };
-}
-
-function drawHeatTransferKeyBase(
-  ctx: CanvasRenderingContext2D,
-  tile: HeatTransferTile,
-  x: number,
-  y: number,
-  config: SceneConfig,
-  keyIndex: number,
-) {
-  const override = config.keyOverrides[keyIndex] ?? {};
-  const color = override.color ?? tile.key.color ?? config.keycapColor;
-  const overlap = Math.min(HEAT_TRANSFER_FACE_JOIN_OVERLAP_PX, tile.sideX / 3, tile.sideY / 3);
-  ctx.fillStyle = shadeColor(color, -12);
-  ctx.fillRect(x + tile.sideX, y, tile.topW, tile.sideY + overlap);
-  ctx.fillRect(x, y + tile.sideY, tile.sideX + overlap, tile.topH);
-  ctx.fillRect(x + tile.sideX + tile.topW - overlap, y + tile.sideY, tile.sideX + overlap, tile.topH);
-  ctx.fillRect(x + tile.sideX, y + tile.sideY + tile.topH - overlap, tile.topW, tile.sideY + overlap);
-  ctx.fillStyle = color;
-  ctx.fillRect(x + tile.sideX - overlap, y + tile.sideY - overlap, tile.topW + overlap * 2, tile.topH + overlap * 2);
-}
-
-function repairHeatTransferSeams(
-  ctx: CanvasRenderingContext2D,
-  projectionCanvas: HTMLCanvasElement,
-  tile: { key: ParsedKey; topW: number; topH: number; sideX: number; sideY: number },
-  x: number,
-  y: number,
-  config: SceneConfig,
-  keyIndex: number,
-  source: { sourceX: number; sourceY: number; sourceW: number; sourceH: number },
-) {
-  const seam = Math.min(HEAT_TRANSFER_SEAM_REPAIR_PX, tile.sideX / 2, tile.sideY / 2);
-  const topX = x + tile.sideX;
-  const topY = y + tile.sideY;
-  const override = config.keyOverrides[keyIndex] ?? {};
-  const color = override.color ?? tile.key.color ?? config.keycapColor;
-
-  ctx.save();
-  ctx.fillStyle = color;
-  ctx.fillRect(topX, topY - seam, tile.topW, seam * 2);
-  ctx.fillRect(topX, topY + tile.topH - seam, tile.topW, seam * 2);
-  ctx.fillRect(topX - seam, topY, seam * 2, tile.topH);
-  ctx.fillRect(topX + tile.topW - seam, topY, seam * 2, tile.topH);
-  ctx.restore();
-
-  const sourceSeamY = (source.sourceH / tile.topH) * seam;
-  drawClippedImage(ctx, projectionCanvas, source.sourceX, source.sourceY, source.sourceW, sourceSeamY, topX, topY - seam, tile.topW, seam * 2);
-  drawClippedImage(ctx, projectionCanvas, source.sourceX, source.sourceY + source.sourceH - sourceSeamY, source.sourceW, sourceSeamY, topX, topY + tile.topH - seam, tile.topW, seam * 2);
-}
-
-async function drawHeatTransferLegends(
-  ctx: CanvasRenderingContext2D,
-  tile: HeatTransferTile,
-  x: number,
-  y: number,
-  config: SceneConfig,
-  keyIndex: number,
-) {
-  const { entries, legendScale, legendFont } = heatTransferLegendContext(tile, config, keyIndex);
-
-  drawLegendEntries(ctx, entries.filter((entry) => entry.index < 9), {
-    x: x + tile.sideX,
-    y: y + tile.sideY,
-    width: tile.topW,
-    height: tile.topH,
-    fontScale: Math.min(tile.topW, tile.topH) / 512,
-    legendScale,
-    legendFont,
-  });
-  drawLegendEntries(ctx, entries.filter((entry) => entry.index >= 9), {
-    x: x + tile.sideX,
-    y: y + tile.sideY + tile.topH,
-    width: tile.topW,
-    height: tile.sideY,
-    fontScale: Math.min(tile.topW, tile.sideY) / 512,
-    legendScale,
-    legendFont,
-  });
-
-  const override = config.keyOverrides[keyIndex] ?? {};
-  const iconUrl = override.iconImageUrl;
-  if (!iconUrl) return;
-  const icon = await loadExportImage(iconUrl);
-  if (!icon) return;
-  const [iconX, iconY] = EXPORT_LEGEND_POSITIONS[Math.max(0, Math.min(8, override.iconPosition ?? 4))] ?? EXPORT_LEGEND_POSITIONS[4];
-  const iconSize = tile.topW * 0.42 * Math.max(0.2, Math.min(2.4, override.iconScale ?? 1));
-  ctx.drawImage(icon, x + tile.sideX + iconX * tile.topW - iconSize / 2, y + tile.sideY + iconY * tile.topH - iconSize / 2, iconSize, iconSize);
-}
-
-function heatTransferLegendContext(tile: HeatTransferTile, config: SceneConfig, keyIndex: number) {
-  const override = config.keyOverrides[keyIndex] ?? {};
-  const labels = override.labels?.length ? override.labels : tile.key.labels;
-  const entries = labels
-    .map((label, index) => ({
-      index,
-      label: normalizeExportLegend(label ?? ""),
-      color: override.legendColor ?? config.legendColor ?? tile.key.textColors[index] ?? tile.key.textColor,
-      size: tile.key.textSizes[index] ?? tile.key.textSize ?? 3,
-    }))
-    .filter((entry) => entry.label);
-  const legendScale = override.legendScale ?? config.legendScale;
-  const legendFont = override.legendFont ?? config.legendFont;
-  return { entries, legendScale, legendFont };
-}
-
-const EXPORT_LEGEND_POSITIONS: Array<[number, number]> = [
-  [0.18, 0.18],
-  [0.5, 0.18],
-  [0.82, 0.18],
-  [0.18, 0.5],
-  [0.5, 0.5],
-  [0.82, 0.5],
-  [0.18, 0.82],
-  [0.5, 0.82],
-  [0.82, 0.82],
-  [0.18, 0.5],
-  [0.5, 0.5],
-  [0.82, 0.5],
-];
-
-function drawLegendEntries(
-  ctx: CanvasRenderingContext2D,
-  entries: Array<{ index: number; label: string; color: string; size: number }>,
-  area: { x: number; y: number; width: number; height: number; fontScale: number; legendScale: number; legendFont: string },
-) {
-  ctx.save();
-  ctx.textBaseline = "middle";
-  entries.forEach((entry) => {
-    const [positionX, positionY] = EXPORT_LEGEND_POSITIONS[entry.index] ?? EXPORT_LEGEND_POSITIONS[4];
-    const fontSize = Math.max(7, Math.min(area.height * 0.68, (6 + entry.size * 2) * 1.95 * area.legendScale * area.fontScale));
-    ctx.fillStyle = entry.color;
-    ctx.font = `600 ${fontSize}px ${area.legendFont}, "Segoe UI Symbol", "Arial Unicode MS", sans-serif`;
-    ctx.textAlign = positionX < 0.34 ? "left" : positionX > 0.66 ? "right" : "center";
-    const lines = entry.label.split("\n").filter(Boolean).slice(0, 2);
-    const lineHeight = fontSize * 1.08;
-    lines.forEach((line, lineIndex) => {
-      const offset = (lineIndex - (lines.length - 1) / 2) * lineHeight;
-      ctx.fillText(line, area.x + positionX * area.width, area.y + positionY * area.height + offset);
-    });
-  });
-  ctx.restore();
-}
-
-function normalizeExportLegend(raw: string) {
-  const withoutTags = raw.replace(/<i[^>]*class=["'][^"']*(fa-[a-z0-9-]+)[^"']*["'][^>]*><\/i>/gi, (_match, icon: string) => icon.replace(/^fa-/, ""));
-  const text = withoutTags.replace(/<[^>]+>/g, "").trim();
-  if (!text) return "";
-  const textarea = document.createElement("textarea");
-  textarea.innerHTML = text;
-  return textarea.value;
-}
-
-async function loadExportImage(url: string) {
-  const image = new Image();
-  image.src = url;
-  try {
-    await image.decode();
-    return image;
-  } catch {
-    return null;
-  }
-}
-
-function shadeColor(color: string, amount: number) {
-  const hex = color.replace("#", "");
-  if (!/^[0-9a-f]{6}$/i.test(hex)) return color;
-  const channel = (start: number) => Math.max(0, Math.min(255, parseInt(hex.slice(start, start + 2), 16) + amount));
-  return `#${[channel(0), channel(2), channel(4)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function drawFlippedImage(
-  ctx: CanvasRenderingContext2D,
-  image: HTMLCanvasElement,
-  sx: number,
-  sy: number,
-  sw: number,
-  sh: number,
-  dx: number,
-  dy: number,
-  dw: number,
-  dh: number,
-  flipX: boolean,
-  flipY: boolean,
-) {
-  const bleedX = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dw / 3));
-  const bleedY = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dh / 3));
-  ctx.save();
-  ctx.translate(dx + dw / 2, dy + dh / 2);
-  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
-  ctx.drawImage(image, sx, sy, sw, sh, -dw / 2 - bleedX, -dh / 2 - bleedY, dw + bleedX * 2, dh + bleedY * 2);
-  ctx.restore();
-}
-
-function drawClippedImage(
-  ctx: CanvasRenderingContext2D,
-  image: HTMLCanvasElement,
-  sx: number,
-  sy: number,
-  sw: number,
-  sh: number,
-  dx: number,
-  dy: number,
-  dw: number,
-  dh: number,
-) {
-  const sourceWidth = image.width;
-  const sourceHeight = image.height;
-  const bleedX = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dw / 3));
-  const bleedY = Math.min(HEAT_TRANSFER_BLEED_PX, Math.max(0, dh / 3));
-  const sourceBleedX = (sw / dw) * bleedX;
-  const sourceBleedY = (sh / dh) * bleedY;
-  const expandedSx = sx - sourceBleedX;
-  const expandedSy = sy - sourceBleedY;
-  const expandedSw = sw + sourceBleedX * 2;
-  const expandedSh = sh + sourceBleedY * 2;
-  const expandedDx = dx - bleedX;
-  const expandedDy = dy - bleedY;
-  const expandedDw = dw + bleedX * 2;
-  const expandedDh = dh + bleedY * 2;
-
-  const clippedX = Math.max(0, expandedSx);
-  const clippedY = Math.max(0, expandedSy);
-  const clippedRight = Math.min(sourceWidth, expandedSx + expandedSw);
-  const clippedBottom = Math.min(sourceHeight, expandedSy + expandedSh);
-  const clippedW = clippedRight - clippedX;
-  const clippedH = clippedBottom - clippedY;
-  if (clippedW <= 0 || clippedH <= 0) return;
-
-  const offsetX = ((clippedX - expandedSx) / expandedSw) * expandedDw;
-  const offsetY = ((clippedY - expandedSy) / expandedSh) * expandedDh;
-  const destW = (clippedW / expandedSw) * expandedDw;
-  const destH = (clippedH / expandedSh) * expandedDh;
-  ctx.drawImage(image, clippedX, clippedY, clippedW, clippedH, expandedDx + offsetX, expandedDy + offsetY, destW, destH);
-}
-
-async function canvasToPngBytes(canvas: HTMLCanvasElement) {
-  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob ?? new Blob()), "image/png"));
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-async function layerImageBytes(layer: ProjectionLayer): Promise<{ data: Uint8Array; mime: string }> {
-  if (layer.sourceDataUrl) {
-    const parsed = dataUrlToBytes(layer.sourceDataUrl);
-    if (parsed) return parsed;
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, layer.image.naturalWidth || Math.round(layer.width));
-  canvas.height = Math.max(1, layer.image.naturalHeight || Math.round(layer.height));
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return { data: new Uint8Array(), mime: "image/png" };
-  ctx.drawImage(layer.image, 0, 0, canvas.width, canvas.height);
-  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((nextBlob) => resolve(nextBlob ?? new Blob()), "image/png"));
-  return { data: new Uint8Array(await blob.arrayBuffer()), mime: "image/png" };
-}
-
-function dataUrlToBytes(dataUrl: string) {
-  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
-  if (!match) return null;
-  const mime = match[1] || "application/octet-stream";
-  const isBase64 = Boolean(match[2]);
-  const payload = match[3] ?? "";
-  const binary = isBase64 ? atob(payload) : decodeURIComponent(payload);
-  const data = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) data[index] = binary.charCodeAt(index);
-  return { data, mime };
-}
-
-function extensionFromMime(mime: string, fallbackName: string) {
-  if (mime === "image/jpeg") return "jpg";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/png") return "png";
-  const extension = fallbackName.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return extension || "png";
-}
-
-function safeFileBase(name: string) {
-  const base = name.replace(/\.[^/.]+$/, "");
-  return base.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "layer";
-}
-
-function timestampForFile() {
-  return new Date().toISOString().replace(/[:.]/g, "-");
-}
-
-type ZipFile = {
-  path: string;
-  data: Uint8Array;
-};
-
-function createZip(files: ZipFile[]) {
-  const localParts: Uint8Array[] = [];
-  const centralParts: Uint8Array[] = [];
-  let offset = 0;
-
-  files.forEach((file) => {
-    const name = new TextEncoder().encode(file.path.replace(/\\/g, "/"));
-    const crc = crc32(file.data);
-    const localHeader = new Uint8Array(30 + name.length);
-    const local = new DataView(localHeader.buffer);
-    local.setUint32(0, 0x04034b50, true);
-    local.setUint16(4, 20, true);
-    local.setUint16(6, 0x0800, true);
-    local.setUint16(8, 0, true);
-    local.setUint16(10, dosTime(), true);
-    local.setUint16(12, dosDate(), true);
-    local.setUint32(14, crc, true);
-    local.setUint32(18, file.data.length, true);
-    local.setUint32(22, file.data.length, true);
-    local.setUint16(26, name.length, true);
-    localHeader.set(name, 30);
-    localParts.push(localHeader, file.data);
-
-    const centralHeader = new Uint8Array(46 + name.length);
-    const central = new DataView(centralHeader.buffer);
-    central.setUint32(0, 0x02014b50, true);
-    central.setUint16(4, 20, true);
-    central.setUint16(6, 20, true);
-    central.setUint16(8, 0x0800, true);
-    central.setUint16(10, 0, true);
-    central.setUint16(12, dosTime(), true);
-    central.setUint16(14, dosDate(), true);
-    central.setUint32(16, crc, true);
-    central.setUint32(20, file.data.length, true);
-    central.setUint32(24, file.data.length, true);
-    central.setUint16(28, name.length, true);
-    central.setUint32(42, offset, true);
-    centralHeader.set(name, 46);
-    centralParts.push(centralHeader);
-    offset += localHeader.length + file.data.length;
-  });
-
-  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-  const end = new Uint8Array(22);
-  const endView = new DataView(end.buffer);
-  endView.setUint32(0, 0x06054b50, true);
-  endView.setUint16(8, files.length, true);
-  endView.setUint16(10, files.length, true);
-  endView.setUint32(12, centralSize, true);
-  endView.setUint32(16, offset, true);
-
-  const parts = [...localParts, ...centralParts, end];
-  const zipBytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let cursor = 0;
-  parts.forEach((part) => {
-    zipBytes.set(part, cursor);
-    cursor += part.length;
-  });
-  const zipBuffer = zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength) as ArrayBuffer;
-  return new Blob([zipBuffer], { type: "application/zip" });
-}
-
-function dosTime(date = new Date()) {
-  return (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
-}
-
-function dosDate(date = new Date()) {
-  return ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
-}
-
-const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
-  let value = index;
-  for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-  return value >>> 0;
-});
-
-function crc32(data: Uint8Array) {
-  let crc = 0xffffffff;
-  for (let index = 0; index < data.length; index += 1) crc = CRC_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {

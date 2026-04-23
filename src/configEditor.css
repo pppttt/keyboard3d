@@ -1,0 +1,124 @@
+.config-editor-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.config-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.config-editor-toolbar h1 {
+  margin-bottom: 3px;
+}
+
+.config-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.config-editor-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  min-height: 0;
+}
+
+.config-editor-form,
+.config-editor-json {
+  overflow: auto;
+  padding: 18px;
+}
+
+.config-editor-form {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.config-section {
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.config-section h2 {
+  margin-bottom: 12px;
+}
+
+.config-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.config-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-row.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.config-editor-json {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  background: #111518;
+  border-left: 1px solid var(--line);
+}
+
+.config-json-textarea {
+  min-height: 0;
+  resize: none;
+  padding: 12px;
+  color: #d7e3e7;
+  background: #0e1214;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: 12px/1.5 Consolas, monospace;
+}
+
+.config-editor-error {
+  min-height: 18px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.config-button-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 980px) {
+  .config-editor-shell {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .config-editor-main,
+  .config-row,
+  .config-row.three {
+    grid-template-columns: 1fr;
+  }
+
+  .config-editor-json {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}

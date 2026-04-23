@@ -47,20 +47,22 @@ function normalizeLegend(raw: string) {
 
 function drawLegendCanvas(
   entries: Array<{ index: number; label: string; color: string; size: number }>,
-  canvasSize: number,
+  width: number,
+  height: number,
   scale: number,
   legendScale: number,
   legendFont: string,
 ) {
+  const pxPerMm = 42;
   const canvas = document.createElement("canvas");
-  canvas.width = canvasSize;
-  canvas.height = canvasSize;
+  canvas.width = Math.max(128, Math.round(width * pxPerMm));
+  canvas.height = Math.max(96, Math.round(height * pxPerMm));
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.textBaseline = "middle";
   entries.forEach((entry) => {
     const [x, y] = LEGEND_POSITIONS[entry.index];
-    const fontSize = Math.max(20, Math.min(184, (6 + entry.size * 2) * scale * legendScale));
+    const fontSize = Math.max(12, Math.min(canvas.height * 0.72, (6 + entry.size * 2) * scale * legendScale));
     ctx.fillStyle = entry.color;
     ctx.font = `600 ${fontSize}px ${legendFont}, "Segoe UI Symbol", "Arial Unicode MS", sans-serif`;
     ctx.textAlign = x < 0.34 ? "left" : x > 0.66 ? "right" : "center";
@@ -100,7 +102,7 @@ function getIconImage(url: string) {
 function drawIconOnTexture(texture: THREE.CanvasTexture, image: HTMLImageElement, positionIndex: number, iconScale: number) {
   const canvas = texture.image as HTMLCanvasElement;
   const ctx = canvas.getContext("2d")!;
-  const size = canvas.width * 0.42 * iconScale;
+  const size = Math.min(canvas.width, canvas.height) * 0.42 * iconScale;
   const [x, y] = LEGEND_POSITIONS[Math.max(0, Math.min(8, positionIndex))] ?? LEGEND_POSITIONS[4];
   ctx.drawImage(image, x * canvas.width - size / 2, y * canvas.height - size / 2, size, size);
   texture.needsUpdate = true;
@@ -116,6 +118,7 @@ export class Legend {
     legendScale: number,
     legendFont: string,
     legendColor: string,
+    frontLegendHeightRatio: number,
   ) {
     const labels = options.labels?.length ? options.labels : options.label ? [options.label] : [];
     const entries = labels
@@ -134,13 +137,15 @@ export class Legend {
     const iconPosition = options.iconPosition ?? 4;
     const iconScale = Math.max(0.2, Math.min(2.4, options.iconScale ?? 1));
     if (topEntries.length || iconImage) {
-      const topTexture = drawLegendCanvas(topEntries, 512, Math.min(topW, topH) < 15 ? 1.6 : 1.95, legendScale, legendFont);
+      const topPlaneW = topW * 0.82;
+      const topPlaneH = topH * 0.82;
+      const topTexture = drawLegendCanvas(topEntries, topPlaneW, topPlaneH, Math.min(topW, topH) < 15 ? 1.6 : 1.95, legendScale, legendFont);
       if (iconImage?.complete && iconImage.naturalWidth > 0) {
         drawIconOnTexture(topTexture, iconImage, iconPosition, iconScale);
       } else if (iconImage) {
         iconImage.onload = () => drawIconOnTexture(topTexture, iconImage, iconPosition, iconScale);
       }
-      const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(topW * 0.82, topH * 0.82), createLegendMaterial(topTexture));
+      const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(topPlaneW, topPlaneH), createLegendMaterial(topTexture));
       labelMesh.position.set(0, cfg.topSkew ?? 0, cfg.totalDepth + 0.08);
       labelMesh.rotation.x = THREE.MathUtils.degToRad(cfg.topTilt);
       labelMesh.renderOrder = 4;
@@ -149,10 +154,12 @@ export class Legend {
 
     const frontEntries = entries.filter((entry) => entry.index >= 9);
     if (frontEntries.length) {
-      const frontTexture = drawLegendCanvas(frontEntries, 512, 1.75, legendScale, legendFont);
       const frontHeight = Math.max(3.2, Math.min(6.5, cfg.totalDepth * 0.62));
-      const frontMesh = new THREE.Mesh(new THREE.PlaneGeometry(topW * 0.82, frontHeight), createLegendMaterial(frontTexture));
-      frontMesh.position.set(0, -bottomH / 2 - 0.06, Math.max(2.2, cfg.totalDepth * 0.44));
+      const frontPlaneW = topW * 0.82;
+      const frontTexture = drawLegendCanvas(frontEntries, frontPlaneW, frontHeight, 1.75, legendScale, legendFont);
+      const frontMesh = new THREE.Mesh(new THREE.PlaneGeometry(frontPlaneW, frontHeight), createLegendMaterial(frontTexture));
+      const heightRatio = THREE.MathUtils.clamp(frontLegendHeightRatio, 0.35, 1);
+      frontMesh.position.set(0, -bottomH / 2 - 0.06, Math.max(2.2, cfg.totalDepth * heightRatio));
       frontMesh.rotation.x = Math.PI / 2;
       frontMesh.renderOrder = 4;
       group.add(frontMesh);

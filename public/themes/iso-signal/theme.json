@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "kind": "keyboard3d-theme",
+  "name": "Signal ISO",
+  "source": {
+    "app": "keyboard3d",
+    "layoutPath": "/layouts/iso-60-layout.json"
+  },
+  "defaults": {
+    "keycap": {
+      "color": "#ececec",
+      "material": "abs"
+    },
+    "legend": {
+      "font": "\"Arial Narrow\"",
+      "color": "#101416",
+      "scale": 5.8
+    },
+    "case": {
+      "color": "#2f3438",
+      "material": "polycarbonate"
+    }
+  },
+  "keys": [
+    {
+      "index": 14,
+      "keycap": { "color": "#ef8354" },
+      "legend": { "labels": ["Enter"], "color": "#111111", "scale": 6.6 }
+    },
+    {
+      "index": 28,
+      "keycap": { "color": "#64c6b0" },
+      "legend": { "color": "#101416" }
+    },
+    {
+      "index": 42,
+      "keycap": { "color": "#4f88d9" },
+      "legend": { "color": "#ffffff" }
+    },
+    {
+      "index": 57,
+      "keycap": { "color": "#101416" },
+      "legend": { "labels": ["SIGNAL"], "color": "#64c6b0", "scale": 5.2 }
+    }
+  ]
+}
